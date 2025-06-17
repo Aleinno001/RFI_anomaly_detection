@@ -1,10 +1,9 @@
 import numpy as np
 from groundingdino.util.inference import load_model
 from matplotlib import pyplot as plt
-from ultralytics import YOLOE, SAM, FastSAM
+from ultralytics import SAM
 from torchvision.ops import box_convert
-from ultralytics.data.annotator import auto_annotate
-from ultralytics.models.fastsam import FastSAMPredictor
+import torchvision.transforms as T
 from ultralytics.models.sam import SAM2VideoPredictor
 import os
 import torch
@@ -12,7 +11,6 @@ import gc
 import time
 import utility
 from groundingdino.util.inference import load_image, predict, annotate
-from scipy.interpolate import make_interp_spline
 from gpu_utility import set_device
 import cv2
 
@@ -37,16 +35,13 @@ def main():
     overrides = dict(conf=0.25, task="segment", mode="predict", imgsz=1024, model="./models/sam2.1/sam2.1_l.pt")
     samPredictor = SAM2VideoPredictor(overrides=overrides)
 
-    samModel = SAM("./models/sam2.1/sam2.1_b.pt")
-    mobsamModel = SAM("./models/mobilesam/mobile_sam.pt")
+    samModel = SAM("./models/sam2.1/sam2.1_s.pt")       #Small è il più affidabile e capisce meglio quale sia il binario completo
     overrides = dict(conf=0.25, task="segment", mode="predict", model="FastSAM-s.pt", save=False, imgsz=1024)
-    predictor = FastSAMPredictor(overrides=overrides)
 
-    #BACKGROUND_PROMPT = "train tracks."
-    BACKGROUND_PROMPT = "left rail."
+    BACKGROUND_PROMPT = "all train tracks."
     TEXT_PROMPT = "all objects . all humans."
-    BOX_TRESHOLD = 0.35
-    TEXT_TRESHOLD = 0.25
+    BOX_TRESHOLD = 0.30
+    TEXT_TRESHOLD = 0.20
 
     # Create a temporary directory for frame storage
     temp_dir = os.path.join("temp_frames")
@@ -109,12 +104,12 @@ def main():
                     device=device,
                 )
                 # Annotate for Grounding Dino track finding
-                annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
+                #annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
                 #print(phrases, logits)
 
-                cv2.imshow("Visualizing results of track detection", annotated_frame)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+                #cv2.imshow("Visualizing results of track detection", annotated_frame)
+                #cv2.waitKey(0)
+                #cv2.destroyAllWindows()
                 '''
                 '''
                 w = image_source.shape[1]
@@ -140,16 +135,15 @@ def main():
                 #cv2.destroyAllWindows()
 
                 # -----------------HUGS EDGES--------------------
-                x = int(gd_boxes[0][1])
-                y = int(gd_boxes[0][0])
-                print("x=",x,"y=",y)
-                hc = image_cropped.shape[1]
-                wc = image_cropped.shape[0]
+                x = int(gd_boxes[0][0])
+                y = int(gd_boxes[0][1])
+                hc = image_cropped.shape[0]
+                wc = image_cropped.shape[1]
 
                 #Overlaps the edge detection of the cropped GD detection box onto the fullsize image, full black so that there are no other contours except the ones of Canny
                 blacked_image = np.zeros_like(image_source)
                 blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
-                blacked_image[x:x+wc,y:y+hc] = edges
+                blacked_image[y:y+hc,x:x+wc] = edges
 
                 # Step 3: Find contours from the edge image
                 contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -170,10 +164,10 @@ def main():
                 overlay = image_source.copy()
                 cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
 
-                cv2.imshow('Countours', overlay)
-                cv2.waitKey(0)
+                #cv2.imshow('Countours', overlay)
+                #cv2.waitKey(0)
 
-                cv2.destroyAllWindows()
+                #cv2.destroyAllWindows()
 
                 #----------------Extracting some points from mask -------------------
                 #Creating a black image with only the curves of the mask
@@ -183,8 +177,8 @@ def main():
                 found = False
                 scanning_height = y+hc
                 while found == False:
-                    for i in range(0,wc,1):
-                        if black_and_mask[x+i][scanning_height][1]==255:      #FIXME ricavare pixel
+                    for i in range(0,int(wc/2),1):
+                        if black_and_mask[scanning_height][x+i][1]==255:      #FIXME ricavare pixel
                             points.append([x+i,scanning_height])
                             #Adding two extra points around the first to improve segmentation accuracy on the rails
                             offset = 4  #FIXME da fare parametrico
@@ -196,8 +190,8 @@ def main():
                 scanning_height = y + hc
                 found = False
                 while found == False:
-                    for i in range(wc,0,-1):
-                        if black_and_mask[x+i][scanning_height][1]==255:
+                    for i in range(wc,int(wc/2),-1):
+                        if black_and_mask[scanning_height][x+i][1]==255:
                             points.append([x+i,scanning_height])
                             # Adding two extra points around the first to improve segmentation accuracy on the rails
                             offset = 4
@@ -208,20 +202,72 @@ def main():
                     scanning_height = scanning_height -1
                 #Middle point between the two rails at the base
                 #FIXME da verificare se sono state trovate entramnbe le rail, non è detto perche edge highlight potrebbe non funzionare
-                middle_point = (points[0][0]+points[3][0])/2
-                points.append([x+middle_point,y+hc])
+                #FIXME l'offset verticale deve essere parametrico
+                points.append([x+int(wc/2),y+hc])
+                points.append([x+int(wc/3),y+hc])
+                points.append([x+int(wc*2/3), y + hc])
+                points.append([x + int(wc / 2), y + hc - 20])
+                points.append([x + int(wc / 3), y + hc - 20])
+                points.append([x + int(wc * 2 / 3), y + hc - 20])
 
 
                 #TODO Da provare a promptare i punti nel dettaglio dei punto appartenenti alla rail e alla carreggiata nel mezzo
 
-                results = samModel(image_source,points=points)
+                labels = np.ones(len(points))
+                #results = samModel(image_source,points=points,labels=labels)
 
+                results = samModel.predict(
+                    source=image_source,
+                    points=[points],  # Wrap the full list in another list: shape (1, N, 2)
+                    labels=[labels],  # Same: shape (1, N)
+                )
 
-                IMAGE_COPY = image_source.copy()
-                for p in points:
-                    cv2.circle(IMAGE_COPY, (int(p[0]),int(p[1])), 5, (0, 0, 255))
-                cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
+                '''
+                #------Grounded DINO runned on the output mask of sam2.1 to detect holes in it
+                mask_tensor = results[0].masks.data.max(dim=0)[0].float()  # shape [H, W]
+                mask_tensor = mask_tensor.unsqueeze(0).repeat(3, 1, 1)  # shape [3, H, W]
+                mask_tensor = mask_tensor.to(torch.float32).to(device)
+
+                gd_boxes, logits, phrases = predict(
+                    model=groundedModel,
+                    image=mask_tensor,
+                    caption="all holes.",
+                    box_threshold=BOX_TRESHOLD,
+                    text_threshold=TEXT_TRESHOLD,
+                    device=device,
+                )
+                # Annotate for Grounding Dino track finding
+                annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
+                # print(phrases, logits)
+
+                cv2.imshow("Visualizing results of track detection", annotated_frame)
                 cv2.waitKey(0)
+                cv2.destroyAllWindows()
+                '''
+
+                #----Grounded DINO for detection of EVERITHING alias obstacles------
+                gd_boxes, logits, phrases = predict(
+                    model=groundedModel,
+                    image=gd_image,
+                    caption="all things .",
+                    box_threshold=0.20,
+                    text_threshold=0.16,
+                    device=device,
+                )
+                # Annotate for Grounding Dino track finding
+                annotated_image = annotate(image_source=results[0].plot(), boxes=gd_boxes, logits=logits, phrases=phrases)
+                # print(phrases, logits)
+
+                #cv2.imshow("Visualizing results of track detection", annotated_frame)
+                #cv2.waitKey(0)
+                #cv2.destroyAllWindows()
+
+                #Visualizing points for sam2.1 segmentation
+                #IMAGE_COPY = image_source.copy()
+                #for p in points:
+                #    cv2.circle(IMAGE_COPY, (int(p[0]),int(p[1])), 2, (0, 0, 255),thickness=2)
+                #cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
+                #cv2.waitKey(0)
 
 
                 '''
@@ -263,12 +309,12 @@ def main():
                 #results = mobsamModel(image_source)
 
                 plt.figure(figsize=(8, 6))
-                #plt.imshow(annotated_frame)
-                plt.imshow(results[0].plot())
+                plt.imshow(annotated_image)
+                #plt.imshow(results[0].plot())
                 if True:  # show the plt image using OpenCV
                     cv2.imshow("Processed video frame", utility.plt_figure_to_cv2(plt.gcf()))
                     key = cv2.waitKey(1)
-                    cv2.waitKey(0)
+                    #cv2.waitKey(0)
                     if key == ord('q'):
                         raise KeyboardInterrupt
 

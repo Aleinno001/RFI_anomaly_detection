@@ -38,7 +38,7 @@ def main():
     samModel = SAM("./models/sam2.1/sam2.1_s.pt")       #Small è il più affidabile e capisce meglio quale sia il binario completo
     overrides = dict(conf=0.25, task="segment", mode="predict", model="FastSAM-s.pt", save=False, imgsz=1024)
 
-    BACKGROUND_PROMPT = "all train tracks."
+    BACKGROUND_PROMPT = "one train tracks."
     TEXT_PROMPT = "all objects . all humans."
     BOX_TRESHOLD = 0.30
     TEXT_TRESHOLD = 0.20
@@ -110,8 +110,7 @@ def main():
                 #cv2.imshow("Visualizing results of track detection", annotated_frame)
                 #cv2.waitKey(0)
                 #cv2.destroyAllWindows()
-                '''
-                '''
+
                 w = image_source.shape[1]
                 h = image_source.shape[0]
                 gd_boxes = gd_boxes * torch.Tensor([w, h, w, h])
@@ -171,6 +170,7 @@ def main():
 
                 #----------------Extracting some points from mask -------------------
                 #Creating a black image with only the curves of the mask
+
                 black_and_mask = np.zeros_like(image_source)
                 cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
                 points = []
@@ -206,9 +206,11 @@ def main():
                 points.append([x+int(wc/2),y+hc])
                 points.append([x+int(wc/3),y+hc])
                 points.append([x+int(wc*2/3), y + hc])
-                points.append([x + int(wc / 2), y + hc - 20])
-                points.append([x + int(wc / 3), y + hc - 20])
-                points.append([x + int(wc * 2 / 3), y + hc - 20])
+                points.append([x + int(wc/3), y + hc - 20])
+                points.append([x + int(wc/2), y + hc - 20])
+                points.append([x+int(wc*2/3), y + hc - 20])
+                points.append([x + int(wc / 2) - int(wc/4), y + hc - 40])
+                points.append([x + int(wc / 2) +int( wc/4), y + hc - 40])
 
 
                 #TODO Da provare a promptare i punti nel dettaglio dei punto appartenenti alla rail e alla carreggiata nel mezzo

@@ -15,7 +15,7 @@ Installare SAM2 e Grounding DINO:
 
 ```bash
 pip install sam2
-pip install rf-groundingdino
+pip install rf-grounding_dino
 ```
 Il pacchetto Grounding Dino non è ufficiale ma è mantenuto da Roboflow e semplifica l'installazione rispetto alla versione sorgente origianle.
 Nota: la versione RF-GroundingDINO ha una dipendenza da supervision senza specificarne la versione ma il pacchetto Pip è stato creato quando la versione era la 0.21 e ne dipende.
@@ -43,11 +43,20 @@ SAM2 con wget:
 
 ```bash
 wget https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_tiny.pt
+wget https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_t.pt
+```
+
+YOLOE con wget
+
+```bash
+wget https://github.com/ultralytics/assets/releases/download/v8.3.0/yoloe-11l-seg.pt
 ```
 
 Spostare i modelli nelle rispettive cartelle:
 
 ```bash
-mv groundingdino_swint_ogc.pth models/groundingdino/
+mv groundingdino_swint_ogc.pth models/grounding_dino/
 mv sam2.1_hiera_tiny.pt models/sam2.1/
+mv sam2.1_t.pt models/sam2.1/
+mv yoloe-11l-seg.pt models/yoloe/
 ``` 

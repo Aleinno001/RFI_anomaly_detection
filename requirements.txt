@@ -6,3 +6,5 @@ opencv-python
 opencv-python-headless
 Pillow
 supervision==0.21
+
+ultralytics

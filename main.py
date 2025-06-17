@@ -431,7 +431,8 @@ if __name__ == '__main__':
 
     ##  Grounding DINO
 
-    model = load_model("configs/grounding_dino/GroundingDINO_SwinT_OGC.py", "models/groundingdino/groundingdino_swint_ogc.pth", device.type)
+    model = load_model("configs/grounding_dino/GroundingDINO_SwinT_OGC.py",
+                       "models/grounding_dino/groundingdino_swint_ogc.pth", device.type)
     # IMAGE_PATH = "inserimento_oggetti/inserimento_oggetti_00064.jpg"
     TEXT_PROMPT = "object ."
     BOX_TRESHOLD = 0.35

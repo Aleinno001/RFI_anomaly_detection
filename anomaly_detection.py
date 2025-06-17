@@ -21,8 +21,8 @@ def read_config(config_path):
     config = {
         'sam2_checkpoint': "./models/sam2.1/sam2.1_hiera_tiny.pt",
         'sam2_cfg_path': "./configs/sam2.1/sam2.1_hiera_t.yaml",
-        'groundingdino_checkpoint': "./models/groundingdino/groundingdino_swint_ogc.pth",
-        'groundingdino_cfg_path': "./configs/groundingdino/GroundingDINO_SwinT_OGC.py"
+        'groundingdino_checkpoint': "./models/grounding_dino/groundingdino_swint_ogc.pth",
+        'groundingdino_cfg_path': "./configs/grounding_dino/GroundingDINO_SwinT_OGC.py"
     }
 
     # Check if config file exists
@@ -66,6 +66,7 @@ def parse_args():
         "--input_video",
         type=str,
         required=True,
+        default="./test_video/test_video_san_donato.mp4",
         help="Path to input video file"
     )
 

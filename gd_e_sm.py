@@ -40,8 +40,8 @@ def main():
 
     BACKGROUND_PROMPT = "one train tracks."
     OBSTACLE_PROMPT = "all things ."
-    BOX_TRESHOLD = 0.30
-    TEXT_TRESHOLD = 0.20
+    BOX_TRESHOLD = 0.25
+    TEXT_TRESHOLD = 0.15
 
     last_masks = {}  # Store the last known mask for each object
 
@@ -93,7 +93,7 @@ def main():
 
 
 
-            if frame_idx == 0:
+            if True:        #FIXME frame_index == 0
                 print("Analysis with Grounding Dino")
                 image_source, gd_image = load_image(frame_path)
 
@@ -108,12 +108,12 @@ def main():
                     device=device,
                 )
                 # Annotate for Grounding Dino track finding
-                annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
+                #annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
                 #print(phrases, logits)
 
-                cv2.imshow("Visualizing results of track detection", annotated_frame)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+                #cv2.imshow("Visualizing results of track detection", annotated_frame)
+                #cv2.waitKey(0)
+                #cv2.destroyAllWindows()
 
                 w = image_source.shape[1]
                 h = image_source.shape[0]
@@ -132,9 +132,9 @@ def main():
                 # Canny Edge Detection
                 edges = cv2.Canny(image=img_blur, threshold1=50, threshold2=90)  # Canny Edge Detection
                 # Display Canny Edge Detection Image
-                cv2.imshow('Canny Edge Detection', edges)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+                #cv2.imshow('Canny Edge Detection', edges)
+                #cv2.waitKey(0)
+                #cv2.destroyAllWindows()
 
                 # -----------------HUGS EDGES--------------------
                 x = int(gd_boxes[0][0])
@@ -167,9 +167,9 @@ def main():
                 cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
 
                 #Showing final edge detection result of the rails
-                cv2.imshow('Countours', overlay)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+                #cv2.imshow('Countours', overlay)
+                #cv2.waitKey(0)
+                #cv2.destroyAllWindows()
 
                 #----------------Extracting some points from mask -------------------
                 #Creating a black image with only the curves of the mask
@@ -180,6 +180,7 @@ def main():
                 # Trying negative label points outside the main rails to refine sam segmentation
                 neg_points = []
                 found = False
+
                 scanning_height = y+hc
                 while found == False:
                     for i in range(0,int(wc/2),1):
@@ -220,9 +221,8 @@ def main():
                 points.append([x + int(wc/3), y + hc - 20])
                 points.append([x + int(wc/2), y + hc - 20])
                 points.append([x+int(wc*2/3), y + hc - 20])
-                #points.append([x + int(wc / 2) - int(wc/4), y + hc - 40])
-                #points.append([x + int(wc / 2) +int( wc/4), y + hc - 40])
-                #points.append([x + int(wc / 2), y + hc - 60])
+                points.append([x + int(wc / 2) - int(wc/4), y + hc - 40])
+                points.append([x + int(wc / 2) +int( wc/4), y + hc - 40])
 
 
 
@@ -254,29 +254,6 @@ def main():
                     last_masks[0] = (out_mask_logits[0] > 0).cpu().numpy()
                 '''
 
-                '''
-                #------Grounded DINO runned on the output mask of sam2.1 to detect holes in it
-                mask_tensor = results[0].masks.data.max(dim=0)[0].float()  # shape [H, W]
-                mask_tensor = mask_tensor.unsqueeze(0).repeat(3, 1, 1)  # shape [3, H, W]
-                mask_tensor = mask_tensor.to(torch.float32).to(device)
-
-                gd_boxes, logits, phrases = predict(
-                    model=groundedModel,
-                    image=mask_tensor,
-                    caption="all holes.",
-                    box_threshold=BOX_TRESHOLD,
-                    text_threshold=TEXT_TRESHOLD,
-                    device=device,
-                )
-                # Annotate for Grounding Dino track finding
-                annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
-                # print(phrases, logits)
-
-                cv2.imshow("Visualizing results of track detection", annotated_frame)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
-                '''
-
                 #----Grounded DINO for detection of EVERITHING alias obstacles------
                 gd_boxes, logits, phrases = predict(
                     model=groundedModel,
@@ -287,26 +264,26 @@ def main():
                     device=device,
                 )
                 # Annotate for Grounding Dino track finding
-                annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
-                cv2.imshow("Visualizing results of track detection", annotated_frame)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+                #annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
+                #cv2.imshow("Visualizing results of track detection", annotated_frame)
+                #cv2.waitKey(0)
+                #cv2.destroyAllWindows()
                 annotated_image = annotate(image_source=results[0].plot(), boxes=gd_boxes, logits=logits, phrases=phrases)
                 # print(phrases, logits)
 
 
 
                 #Visualizing points for sam2.1 segmentation
-                IMAGE_COPY = image_source.copy()
-                i=0
-                for p in points:
-                    if i < (len(points)-len(neg_points)):
-                        cv2.circle(IMAGE_COPY, (int(p[0]),int(p[1])), 2, (0, 255, 0),thickness=2)
-                    else:
-                        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (0, 0, 255), thickness=2)
-                    i = i+1
-                cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
-                cv2.waitKey(0)
+                #IMAGE_COPY = image_source.copy()
+                #i=0
+                #for p in points:
+                #    if i < (len(points)-len(neg_points)):
+                #        cv2.circle(IMAGE_COPY, (int(p[0]),int(p[1])), 2, (0, 255, 0),thickness=2)
+                #    else:
+                #        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (0, 0, 255), thickness=2)
+                #    i = i+1
+                #cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
+                #cv2.waitKey(0)
 
 
                 '''
@@ -347,6 +324,8 @@ def main():
 
                 #results = mobsamModel(image_source)
 
+                frame_idx = frame_idx + 1
+
 
             else:
                 print("Analysis in inference and prediction")
@@ -364,6 +343,9 @@ def main():
                 # cv2.waitKey(0)
                 if key == ord('q'):
                     raise KeyboardInterrupt
+            if True:    #FIXME da cambiare il true
+                plt.savefig(os.path.join(VIDEO_OUTPUT_DIR, f"frame_{frame_idx:06d}.jpg"))
+            plt.close()
 
             # Clear memory for next iteration
             #del inference_state

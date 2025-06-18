@@ -32,16 +32,18 @@ def main():
     groundedModel = load_model("configs/grounding_dino/GroundingDINO_SwinT_OGC.py",
                        "models/grounding_dino/groundingdino_swint_ogc.pth", device.type)
     # Create SAM2VideoPredictor
-    overrides = dict(conf=0.25, task="segment", mode="predict", imgsz=1024, model="./models/sam2.1/sam2.1_l.pt")
+    overrides = dict(conf=0.25, task="segment", mode="predict", imgsz=1024, model="./models/sam2.1/sam2.1_s.pt")
     samPredictor = SAM2VideoPredictor(overrides=overrides)
 
     samModel = SAM("./models/sam2.1/sam2.1_s.pt")       #Small è il più affidabile e capisce meglio quale sia il binario completo
     overrides = dict(conf=0.25, task="segment", mode="predict", model="FastSAM-s.pt", save=False, imgsz=1024)
 
     BACKGROUND_PROMPT = "one train tracks."
-    TEXT_PROMPT = "all objects . all humans."
+    OBSTACLE_PROMPT = "all things ."
     BOX_TRESHOLD = 0.30
     TEXT_TRESHOLD = 0.20
+
+    last_masks = {}  # Store the last known mask for each object
 
     # Create a temporary directory for frame storage
     temp_dir = os.path.join("temp_frames")
@@ -85,7 +87,9 @@ def main():
             # Initialize new state for this frame
             torch.cuda.empty_cache()
             gc.collect()
-            #inference_state = video_predictor.init_state(video_path=temp_dir)
+
+            #samPredictor.set_image(frame_path)
+            #inference_state = samPredictor.init_state(samPredictor)
 
 
 
@@ -104,12 +108,12 @@ def main():
                     device=device,
                 )
                 # Annotate for Grounding Dino track finding
-                #annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
+                annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
                 #print(phrases, logits)
 
-                #cv2.imshow("Visualizing results of track detection", annotated_frame)
-                #cv2.waitKey(0)
-                #cv2.destroyAllWindows()
+                cv2.imshow("Visualizing results of track detection", annotated_frame)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
                 w = image_source.shape[1]
                 h = image_source.shape[0]
@@ -128,10 +132,9 @@ def main():
                 # Canny Edge Detection
                 edges = cv2.Canny(image=img_blur, threshold1=50, threshold2=90)  # Canny Edge Detection
                 # Display Canny Edge Detection Image
-                #cv2.imshow('Canny Edge Detection', edges)
-                #cv2.waitKey(0)
-
-                #cv2.destroyAllWindows()
+                cv2.imshow('Canny Edge Detection', edges)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
                 # -----------------HUGS EDGES--------------------
                 x = int(gd_boxes[0][0])
@@ -163,10 +166,10 @@ def main():
                 overlay = image_source.copy()
                 cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
 
-                #cv2.imshow('Countours', overlay)
-                #cv2.waitKey(0)
-
-                #cv2.destroyAllWindows()
+                #Showing final edge detection result of the rails
+                cv2.imshow('Countours', overlay)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
 
                 #----------------Extracting some points from mask -------------------
                 #Creating a black image with only the curves of the mask
@@ -174,6 +177,8 @@ def main():
                 black_and_mask = np.zeros_like(image_source)
                 cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
                 points = []
+                # Trying negative label points outside the main rails to refine sam segmentation
+                neg_points = []
                 found = False
                 scanning_height = y+hc
                 while found == False:
@@ -182,8 +187,11 @@ def main():
                             points.append([x+i,scanning_height])
                             #Adding two extra points around the first to improve segmentation accuracy on the rails
                             offset = 4  #FIXME da fare parametrico
-                            points.append([x+i-offset,scanning_height])   #FIXME da erificare se aggiungendo l'offset sbordo dalla box di grounding dino
+                            points.append([x+i,scanning_height-offset*3])
+                            #points.append([x+i-offset,scanning_height])   #FIXME da erificare se aggiungendo l'offset sbordo dalla box di grounding dino
                             points.append([x+i+offset,scanning_height])
+
+                            neg_points.append([x+i-offset*10,scanning_height])
                             found = True
                             break
                     scanning_height = scanning_height - 1
@@ -195,8 +203,11 @@ def main():
                             points.append([x+i,scanning_height])
                             # Adding two extra points around the first to improve segmentation accuracy on the rails
                             offset = 4
+                            points.append([x + i, scanning_height - offset*3])
                             points.append([x + i - offset, scanning_height])
-                            points.append([x + i + offset, scanning_height])
+                            #points.append([x + i + offset, scanning_height])
+
+                            neg_points.append([x + i + offset * 10, scanning_height])
                             found = True
                             break
                     scanning_height = scanning_height -1
@@ -209,13 +220,19 @@ def main():
                 points.append([x + int(wc/3), y + hc - 20])
                 points.append([x + int(wc/2), y + hc - 20])
                 points.append([x+int(wc*2/3), y + hc - 20])
-                points.append([x + int(wc / 2) - int(wc/4), y + hc - 40])
-                points.append([x + int(wc / 2) +int( wc/4), y + hc - 40])
+                #points.append([x + int(wc / 2) - int(wc/4), y + hc - 40])
+                #points.append([x + int(wc / 2) +int( wc/4), y + hc - 40])
+                #points.append([x + int(wc / 2), y + hc - 60])
+
 
 
                 #TODO Da provare a promptare i punti nel dettaglio dei punto appartenenti alla rail e alla carreggiata nel mezzo
 
-                labels = np.ones(len(points))
+                pos_labels = np.ones(len(points))
+                neg_labels = np.zeros(len(neg_points))
+                labels = np.concatenate((pos_labels,neg_labels))
+
+                points = np.concatenate((points,neg_points))
                 #results = samModel(image_source,points=points,labels=labels)
 
                 results = samModel.predict(
@@ -223,6 +240,19 @@ def main():
                     points=[points],  # Wrap the full list in another list: shape (1, N, 2)
                     labels=[labels],  # Same: shape (1, N)
                 )
+
+                #Sam2.1 video predictor test
+                '''
+                if gd_boxes is not None:
+                    _, out_obj_ids, out_mask_logits = samPredictor.add_new_points_or_box(
+                        inference_state=inference_state,
+                        frame_idx=0,
+                        obj_id=0,
+                        points=[points],
+                    )
+                    # Store railway mask
+                    last_masks[0] = (out_mask_logits[0] > 0).cpu().numpy()
+                '''
 
                 '''
                 #------Grounded DINO runned on the output mask of sam2.1 to detect holes in it
@@ -251,25 +281,32 @@ def main():
                 gd_boxes, logits, phrases = predict(
                     model=groundedModel,
                     image=gd_image,
-                    caption="all things .",
+                    caption=OBSTACLE_PROMPT,
                     box_threshold=0.20,
                     text_threshold=0.16,
                     device=device,
                 )
                 # Annotate for Grounding Dino track finding
+                annotated_frame = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
+                cv2.imshow("Visualizing results of track detection", annotated_frame)
+                cv2.waitKey(0)
+                cv2.destroyAllWindows()
                 annotated_image = annotate(image_source=results[0].plot(), boxes=gd_boxes, logits=logits, phrases=phrases)
                 # print(phrases, logits)
 
-                #cv2.imshow("Visualizing results of track detection", annotated_frame)
-                #cv2.waitKey(0)
-                #cv2.destroyAllWindows()
+
 
                 #Visualizing points for sam2.1 segmentation
-                #IMAGE_COPY = image_source.copy()
-                #for p in points:
-                #    cv2.circle(IMAGE_COPY, (int(p[0]),int(p[1])), 2, (0, 0, 255),thickness=2)
-                #cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
-                #cv2.waitKey(0)
+                IMAGE_COPY = image_source.copy()
+                i=0
+                for p in points:
+                    if i < (len(points)-len(neg_points)):
+                        cv2.circle(IMAGE_COPY, (int(p[0]),int(p[1])), 2, (0, 255, 0),thickness=2)
+                    else:
+                        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (0, 0, 255), thickness=2)
+                    i = i+1
+                cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
+                cv2.waitKey(0)
 
 
                 '''
@@ -310,18 +347,28 @@ def main():
 
                 #results = mobsamModel(image_source)
 
-                plt.figure(figsize=(8, 6))
-                plt.imshow(annotated_image)
-                #plt.imshow(results[0].plot())
-                if True:  # show the plt image using OpenCV
-                    cv2.imshow("Processed video frame", utility.plt_figure_to_cv2(plt.gcf()))
-                    key = cv2.waitKey(1)
-                    #cv2.waitKey(0)
-                    if key == ord('q'):
-                        raise KeyboardInterrupt
 
-                gc.collect()
-                torch.cuda.empty_cache()
+            else:
+                print("Analysis in inference and prediction")
+
+
+            plt.figure(figsize=(8, 6))
+            #plt.imshow(frame_rgb)
+            plt.imshow(annotated_image)
+            # plt.imshow(results[0].plot())
+            for obj_id, mask in last_masks.items():
+                utility.show_mask_v(mask, plt.gca(), obj_id=obj_id)
+            if True:  # show the plt image using OpenCV
+                cv2.imshow("Processed video frame", utility.plt_figure_to_cv2(plt.gcf()))
+                key = cv2.waitKey(1)
+                # cv2.waitKey(0)
+                if key == ord('q'):
+                    raise KeyboardInterrupt
+
+            # Clear memory for next iteration
+            #del inference_state
+            gc.collect()
+            torch.cuda.empty_cache()
 
 
 

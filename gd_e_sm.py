@@ -1,14 +1,21 @@
 import numpy as np
 from groundingdino.util.inference import load_model
 from matplotlib import pyplot as plt
-from ultralytics import SAM
+from sam2.build_sam import build_sam2_video_predictor
+from sam2.utils.amg import remove_small_regions
+from ultralytics import SAM, cfg
 from torchvision.ops import box_convert
 import torchvision.transforms as T
-from ultralytics.models.sam import SAM2VideoPredictor
+from ultralytics.models.sam import SAM2VideoPredictor, SAM2Predictor
 import os
 import torch
 import gc
 import time
+
+from ultralytics.utils import DEFAULT_CFG
+
+#from ultralytics.models.sam.amg import remove_small_regions
+
 import utility
 from groundingdino.util.inference import load_image, predict, annotate
 from gpu_utility import set_device
@@ -31,19 +38,16 @@ def main():
 
     groundedModel = load_model("configs/grounding_dino/GroundingDINO_SwinT_OGC.py",
                        "models/grounding_dino/groundingdino_swint_ogc.pth", device.type)
-    # Create SAM2VideoPredictor
-    overrides = dict(conf=0.25, task="segment", mode="predict", imgsz=1024, model="./models/sam2.1/sam2.1_s.pt")
-    samPredictor = SAM2VideoPredictor(overrides=overrides)
-
     samModel = SAM("./models/sam2.1/sam2.1_s.pt")       #Small è il più affidabile e capisce meglio quale sia il binario completo
-    overrides = dict(conf=0.25, task="segment", mode="predict", model="FastSAM-s.pt", save=False, imgsz=1024)
+    mobileSAM = SAM("mobile_sam.pt")
+    # Create SAM2VideoPredictor
+    samPredictor = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_s.yaml", "./models/sam2.1/sam2.1_hiera_small.pt", device=device)
 
     BACKGROUND_PROMPT = "one train tracks."
     OBSTACLE_PROMPT = "all things ."
     BOX_TRESHOLD = 0.25
     TEXT_TRESHOLD = 0.15
 
-    last_masks = {}  # Store the last known mask for each object
 
     # Create a temporary directory for frame storage
     temp_dir = os.path.join("temp_frames")
@@ -60,7 +64,11 @@ def main():
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"Video stream at {fps} FPS, resolution: {width}x{height}")
 
+    # Object tracking variables
+    ann_obj_id = 1  # Object ID counter
+    last_masks = {}  # Store the last known mask for each object
     frame_idx = 0
+    railway_box = None  # Store railway box for future reference
 
     try:
         while True:
@@ -88,15 +96,12 @@ def main():
             torch.cuda.empty_cache()
             gc.collect()
 
-            #samPredictor.set_image(frame_path)
-            #inference_state = samPredictor.init_state(samPredictor)
+            #samPredictor.setup_source(VIDEO_INPUT)
+            inference_state = samPredictor.init_state(video_path=temp_dir)
 
-
-
-            if True:        #FIXME frame_index == 0
+            if frame_idx == 0:        #FIXME frame_idx == 0
                 print("Analysis with Grounding Dino")
                 image_source, gd_image = load_image(frame_path)
-
 
                 # First frame: detect railway and objects with Grounding DINO
                 gd_boxes, logits, phrases = predict(
@@ -119,127 +124,152 @@ def main():
                 h = image_source.shape[0]
                 gd_boxes = gd_boxes * torch.Tensor([w, h, w, h])
                 gd_boxes = box_convert(boxes=gd_boxes, in_fmt="cxcywh", out_fmt="xyxy").numpy()
+                railway_box = gd_boxes[0]
 
-                #-----------------CANNY EDGES--------------------
-                # Convert to graycsale
-                image_cropped = image_source[int(gd_boxes[0][1]):int(gd_boxes[0][3]), int(gd_boxes[0][0]):int(gd_boxes[0][2])]
+                if railway_box is not None:
+                    #-----------------CANNY EDGES--------------------
+                    # Convert to graycsale
+                    image_cropped = image_source[int(gd_boxes[0][1]):int(gd_boxes[0][3]), int(gd_boxes[0][0]):int(gd_boxes[0][2])]
 
-                img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
+                    img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
 
-                # Blur the image for better edge detection
-                img_blur = cv2.GaussianBlur(img_gray, (9, 9), 0)
+                    # Blur the image for better edge detection
+                    img_blur = cv2.GaussianBlur(img_gray, (9, 9), 0)
 
-                # Canny Edge Detection
-                edges = cv2.Canny(image=img_blur, threshold1=50, threshold2=90)  # Canny Edge Detection
-                # Display Canny Edge Detection Image
-                #cv2.imshow('Canny Edge Detection', edges)
-                #cv2.waitKey(0)
-                #cv2.destroyAllWindows()
+                    # Canny Edge Detection
+                    edges = cv2.Canny(image=img_blur, threshold1=50, threshold2=90)  # Canny Edge Detection
+                    # Display Canny Edge Detection Image
+                    #cv2.imshow('Canny Edge Detection', edges)
+                    #cv2.waitKey(0)
+                    #cv2.destroyAllWindows()
 
-                # -----------------HUGS EDGES--------------------
-                x = int(gd_boxes[0][0])
-                y = int(gd_boxes[0][1])
-                hc = image_cropped.shape[0]
-                wc = image_cropped.shape[1]
+                    # -----------------HUGS EDGES--------------------
+                    x = int(gd_boxes[0][0])
+                    y = int(gd_boxes[0][1])
+                    hc = image_cropped.shape[0]
+                    wc = image_cropped.shape[1]
 
-                #Overlaps the edge detection of the cropped GD detection box onto the fullsize image, full black so that there are no other contours except the ones of Canny
-                blacked_image = np.zeros_like(image_source)
-                blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
-                blacked_image[y:y+hc,x:x+wc] = edges
+                    #Overlaps the edge detection of the cropped GD detection box onto the fullsize image, full black so that there are no other contours except the ones of Canny
+                    blacked_image = np.zeros_like(image_source)
+                    blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
+                    blacked_image[y:y+hc,x:x+wc] = edges
 
-                # Step 3: Find contours from the edge image
-                contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    # Step 3: Find contours from the edge image
+                    contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-                # Step 4: Draw contours on a blank canvas (for visualization)
-                output = np.zeros_like(blacked_image)
-                cv2.drawContours(output, contours, -1, (255), 1)
+                    # Step 4: Draw contours on a blank canvas (for visualization)
+                    output = np.zeros_like(blacked_image)
+                    cv2.drawContours(output, contours, -1, (255), 1)
 
-                # Optional: Filter meaningful curves by length or area
-                meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 400]
+                    # Optional: Filter meaningful curves by length or area
+                    meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 400]
 
-                # Step 5: Draw meaningful contours separately
-                #filtered_output = np.zeros_like(img_gray)
-                #cv2.drawContours(filtered_output, meaningful_contours, -1, (255), 1)
-                #cv2.imshow('Countours', filtered_output)
-                #cv2.waitKey(0)
-                # Overlay curves on the original color image
-                overlay = image_source.copy()
-                cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
+                    # Step 5: Draw meaningful contours separately
+                    #filtered_output = np.zeros_like(img_gray)
+                    #cv2.drawContours(filtered_output, meaningful_contours, -1, (255), 1)
+                    #cv2.imshow('Countours', filtered_output)
+                    #cv2.waitKey(0)
+                    # Overlay curves on the original color image
+                    overlay = image_source.copy()
+                    cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
 
-                #Showing final edge detection result of the rails
-                #cv2.imshow('Countours', overlay)
-                #cv2.waitKey(0)
-                #cv2.destroyAllWindows()
+                    #Showing final edge detection result of the rails
+                    #cv2.imshow('Countours', overlay)
+                    #cv2.waitKey(0)
+                    #cv2.destroyAllWindows()
 
-                #----------------Extracting some points from mask -------------------
-                #Creating a black image with only the curves of the mask
+                    #----------------Extracting some points from mask -------------------
+                    #Creating a black image with only the curves of the mask
 
-                black_and_mask = np.zeros_like(image_source)
-                cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
-                points = []
-                # Trying negative label points outside the main rails to refine sam segmentation
-                neg_points = []
-                found = False
+                    black_and_mask = np.zeros_like(image_source)
+                    cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
+                    points = []
+                    # Trying negative label points outside the main rails to refine sam segmentation
+                    neg_points = []
+                    found = False
 
-                scanning_height = y+hc
-                while found == False:
-                    for i in range(0,int(wc/2),1):
-                        if black_and_mask[scanning_height][x+i][1]==255:      #FIXME ricavare pixel
-                            points.append([x+i,scanning_height])
-                            #Adding two extra points around the first to improve segmentation accuracy on the rails
-                            offset = 4  #FIXME da fare parametrico
-                            points.append([x+i,scanning_height-offset*3])
-                            #points.append([x+i-offset,scanning_height])   #FIXME da erificare se aggiungendo l'offset sbordo dalla box di grounding dino
-                            points.append([x+i+offset,scanning_height])
+                    scanning_height = y+hc
+                    while found == False:
+                        for i in range(0,int(wc/2),1):
+                            if black_and_mask[scanning_height][x+i][1]==255:      #FIXME ricavare pixel
+                                points.append([x+i,scanning_height])
+                                #Adding two extra points around the first to improve segmentation accuracy on the rails
+                                offset = 4  #FIXME da fare parametrico
+                                points.append([x+i,scanning_height-offset*3])
+                                #points.append([x+i-offset,scanning_height])   #FIXME da erificare se aggiungendo l'offset sbordo dalla box di grounding dino
+                                points.append([x+i+offset,scanning_height])
 
-                            neg_points.append([x+i-offset*10,scanning_height])
-                            found = True
-                            break
-                    scanning_height = scanning_height - 1
-                scanning_height = y + hc
-                found = False
-                while found == False:
-                    for i in range(wc,int(wc/2),-1):
-                        if black_and_mask[scanning_height][x+i][1]==255:
-                            points.append([x+i,scanning_height])
-                            # Adding two extra points around the first to improve segmentation accuracy on the rails
-                            offset = 4
-                            points.append([x + i, scanning_height - offset*3])
-                            points.append([x + i - offset, scanning_height])
-                            #points.append([x + i + offset, scanning_height])
+                                neg_points.append([x+i-offset*10,scanning_height])
+                                found = True
+                                break
+                        scanning_height = scanning_height - 1
+                    scanning_height = y + hc
+                    found = False
+                    while found == False:
+                        for i in range(wc,int(wc/2),-1):
+                            if black_and_mask[scanning_height][x+i][1]==255:
+                                points.append([x+i,scanning_height])
+                                # Adding two extra points around the first to improve segmentation accuracy on the rails
+                                offset = 4
+                                points.append([x + i, scanning_height - offset*3])
+                                points.append([x + i - offset, scanning_height])
+                                #points.append([x + i + offset, scanning_height])
 
-                            neg_points.append([x + i + offset * 10, scanning_height])
-                            found = True
-                            break
-                    scanning_height = scanning_height -1
-                #Middle point between the two rails at the base
-                #FIXME da verificare se sono state trovate entramnbe le rail, non è detto perche edge highlight potrebbe non funzionare
-                #FIXME l'offset verticale deve essere parametrico
-                points.append([x+int(wc/2),y+hc])
-                points.append([x+int(wc/3),y+hc])
-                points.append([x+int(wc*2/3), y + hc])
-                points.append([x + int(wc/3), y + hc - 20])
-                points.append([x + int(wc/2), y + hc - 20])
-                points.append([x+int(wc*2/3), y + hc - 20])
-                points.append([x + int(wc / 2) - int(wc/4), y + hc - 40])
-                points.append([x + int(wc / 2) +int( wc/4), y + hc - 40])
+                                neg_points.append([x + i + offset * 10, scanning_height])
+                                found = True
+                                break
+                        scanning_height = scanning_height -1
+                    #Middle point between the two rails at the base
+                    #FIXME da verificare se sono state trovate entramnbe le rail, non è detto perche edge highlight potrebbe non funzionare
+                    #FIXME l'offset verticale deve essere parametrico
+                    points.append([x+int(wc/2),y+hc])
+                    points.append([x+int(wc/3),y+hc])
+                    points.append([x+int(wc*2/3), y + hc])
+                    points.append([x + int(wc/3), y + hc - 20])
+                    points.append([x + int(wc/2), y + hc - 20])
+                    points.append([x+int(wc*2/3), y + hc - 20])
+                    points.append([x + int(wc / 2) - int(wc/4), y + hc - 40])
+                    points.append([x + int(wc / 2) +int( wc/4), y + hc - 40])
 
 
 
-                #TODO Da provare a promptare i punti nel dettaglio dei punto appartenenti alla rail e alla carreggiata nel mezzo
+                    #TODO Da provare a promptare i punti nel dettaglio dei punto appartenenti alla rail e alla carreggiata nel mezzo
 
-                pos_labels = np.ones(len(points))
-                neg_labels = np.zeros(len(neg_points))
-                labels = np.concatenate((pos_labels,neg_labels))
+                    pos_labels = np.ones(len(points))
+                    neg_labels = np.zeros(len(neg_points))
+                    labels = np.concatenate((pos_labels,neg_labels))
 
-                points = np.concatenate((points,neg_points))
-                #results = samModel(image_source,points=points,labels=labels)
+                    points = np.concatenate((points,neg_points))
 
-                results = samModel.predict(
-                    source=image_source,
-                    points=[points],  # Wrap the full list in another list: shape (1, N, 2)
-                    labels=[labels],  # Same: shape (1, N)
-                )
+                    # -----------viedo processing---------
+                    _, out_obj_ids, out_mask_logits = samPredictor.add_new_points_or_box(
+                        inference_state=inference_state,
+                        frame_idx=0,
+                        obj_id=0,
+                        points=[points],
+                        labels=[labels],
+                    )
+
+                    last_masks[0] = (out_mask_logits[0] > 0).cpu().numpy()
+
+                #------Base SAM2.1 segmentation
+                #results = samModel.predict(
+                #    source=image_source,
+                #    points=[points],  # Wrap the full list in another list: shape (1, N, 2)
+                #    labels=[labels],  # Same: shape (1, N)
+                #)
+                #----------Theoretically Utralytics remove islands from mask to clean the result
+                #FIXME do not work
+                '''
+                working_mask = results[0].masks.data[0].cpu().numpy().astype(bool)  # shape: (H, W)
+                working_mask = working_mask.astype(np.uint8)  # convert to uint8 for OpenCV
+                working_mask = remove_small_regions(working_mask,area_thresh=100, mode = "islands")
+                results[0].show()
+                working_mask = working_mask[0].astype(np.uint8) * 255  # now it's 0 and 255 (for display)
+                cv2.imshow("Working mask", working_mask[0])
+                cv2.waitKey(0)
+                cv2.closeAllWindows()
+                '''
 
                 #Sam2.1 video predictor test
                 '''
@@ -268,7 +298,7 @@ def main():
                 #cv2.imshow("Visualizing results of track detection", annotated_frame)
                 #cv2.waitKey(0)
                 #cv2.destroyAllWindows()
-                annotated_image = annotate(image_source=results[0].plot(), boxes=gd_boxes, logits=logits, phrases=phrases)
+                annotated_image = annotate(image_source=image_source, boxes=gd_boxes, logits=logits, phrases=phrases)
                 # print(phrases, logits)
 
 
@@ -324,11 +354,12 @@ def main():
 
                 #results = mobsamModel(image_source)
 
-                frame_idx = frame_idx + 1
+                #frame_idx = frame_idx + 1
 
 
             else:
                 print("Analysis in inference and prediction")
+
 
 
             plt.figure(figsize=(8, 6))
@@ -343,12 +374,19 @@ def main():
                 # cv2.waitKey(0)
                 if key == ord('q'):
                     raise KeyboardInterrupt
-            if True:    #FIXME da cambiare il true
+            if False:    #FIXME da cambiare il true
                 plt.savefig(os.path.join(VIDEO_OUTPUT_DIR, f"frame_{frame_idx:06d}.jpg"))
             plt.close()
 
+            # Calculate processing time
+            processing_time = time.time() - start_time
+            print(f"Frame processed in {processing_time:.2f}s")
+
+            # Increment frame counter
+            frame_idx += 1
+
             # Clear memory for next iteration
-            #del inference_state
+            del inference_state
             gc.collect()
             torch.cuda.empty_cache()
 

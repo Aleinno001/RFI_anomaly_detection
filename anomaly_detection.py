@@ -121,7 +121,7 @@ def parse_args():
 
     return parser.parse_args()
 
-def extract_main_railway_points_and_labels(image_source, gd_boxes):
+def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     # -----------------CANNY EDGES--------------------
     # Convert to graycsale
     image_cropped = image_source[int(gd_boxes[1]):int(gd_boxes[3]), int(gd_boxes[0]):int(gd_boxes[2])]
@@ -138,6 +138,7 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes):
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
 
+    #FIXME Come fare per evitare che gli edges rilevati non siano altro che le rails?
     # -----------------HUGS EDGES--------------------
     x = int(gd_boxes[0])
     y = int(gd_boxes[1])
@@ -157,7 +158,7 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes):
     cv2.drawContours(output, contours, -1, (255), 1)
 
     # Optional: Filter meaningful curves by length or area
-    meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 400]
+    meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 300]
 
     # Step 5: Draw meaningful contours separately
     # filtered_output = np.zeros_like(img_gray)
@@ -168,10 +169,13 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes):
     overlay = image_source.copy()
     cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
 
+    #TODO Le strisce degli edge potrebbero non essere abbastanza lunghe per superare il limite minimo di 300 (per esempio il binario è interrotto da un ostacolo) o l'edge potrebbe fondersi ad un altro elemento (tipo un ostacolo)
+
     # Showing final edge detection result of the rails
-    # cv2.imshow('Countours', overlay)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    if frame_index == 40 or frame_index == 0:
+        cv2.imshow('Countours', overlay)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
     # ----------------Extracting some points from mask -------------------
     # Creating a black image with only the curves of the mask
@@ -200,7 +204,7 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes):
     found = False
     while found == False:
         for i in range(wc,int(wc/2),-1):
-            if black_and_mask[scanning_height][x+i][1]==255:
+            if black_and_mask[scanning_height][x+i][1]==255:        #FIXME il problema che si blocca è circa qua
                 right_rail_base_point[1] = scanning_height
                 right_rail_base_point[0] = i
                 found = True
@@ -260,10 +264,11 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes):
         for j in range(number_of_right_points):
             if points[number_of_left_points+j][1] == height:
                 width = points[number_of_left_points+j][0] - points[i][0]
-                print(width)
                 points.append([points[i][0]+int(width/2),height])
                 points.append([points[i][0]+int(width/3),height])
                 points.append([points[i][0]+int(2*width/3), height])
+                points.append([points[i][0] + int(width / 5), height])
+                points.append([points[i][0] + int(4 * width / 5), height])
                 break
 
 
@@ -316,6 +321,7 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes):
     points.append([x + int(wc / 2), y + hc - 80])
     '''
     # TODO Da provare a promptare i punti nel dettaglio dei punto appartenenti alla rail e alla carreggiata nel mezzo
+    #TODO Calcolare la prospettiva dell'immagine, sapendo il parallelismo dei due binari e langolo che hanno/un computer vision che lo capisce da solo
 
     pos_labels = np.ones(len(points))
     neg_labels = np.zeros(len(neg_points))
@@ -400,11 +406,15 @@ def main():
     # Object tracking variables
     ann_obj_id = 1  # Object ID counter
     ann_all_obj_id = 1
+    ann_rail_id = 1
     last_masks = {}  # Store the last known mask for each object
     last_masks_rails = {}  # Store the last known mask for each object
+    last_masks_obstacles = {}  # Store the last known mask for each object
     frame_idx = 0
     railway_box = None  # Store railway box for future reference
     main_railway_box = None
+
+    test = 0
 
     try:
         while True:
@@ -427,6 +437,9 @@ def main():
 
             # Convert to RGB for visualization
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            print(test) #TODO rimuovere
+            test +=1
 
             # Initialize new state for this frame
             torch.cuda.empty_cache()
@@ -487,52 +500,59 @@ def main():
 
                 #DETECTION OF THE MAIN RAILWAY AND THE OBSTACLES
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
-                    frame_path, groundingdino, "one train tracks. all things.", device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
-                    TEXT_TRESHOLD=TEXT_TRESHOLD_OBSTACLES
-                )
+                    frame_path, groundingdino, BACKGROUND_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
+                    TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
+                )#TODO Rimuovere lo show=true
 
                 # Find main railway box and object points
                 max_score_railway = 0
+
+                for i,box in enumerate(dino_boxes):
+                    if dino_scores[i] > max_score_railway:
+                        main_railway_box = box
+                        max_score_railway = dino_scores[i]
+
+                dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
+                    frame_path, groundingdino, OBSTACLE_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
+                    TEXT_TRESHOLD=TEXT_TRESHOLD_OBSTACLES, show=False,
+                )  # TODO Rimuovere lo show=true
+
                 all_obstacles_points = []
 
-                for i, phrase in enumerate(dino_boxes):
-                    if phrases[i] == 'one train tracks' and dino_scores[i] > max_score_railway:
-                        main_railway_box = dino_boxes[i]
-                        max_score_railway = dino_scores[i]
-                    elif phrases[i] == 'all things':
-                        x_min, y_min, x_max, y_max = dino_boxes[i]
-                        all_obstacles_points.append([(x_min + x_max) // 2, (y_min + y_max) // 2])
+                for i,box in enumerate(dino_boxes):
+                    x_min, y_min, x_max, y_max = box
+                    all_obstacles_points.append([(x_min + x_max) // 2, (y_min + y_max) // 2])
 
                 print(f"Found main railway: {main_railway_box is not None}, all obstacles: {len(all_obstacles_points)}")
 
                 # Add railway to tracking
-                points, labels = extract_main_railway_points_and_labels(frame_rgb,main_railway_box)
                 if main_railway_box is not None:
+                    points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
                     _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
                         inference_state=inference_state_rails,
                         frame_idx=0,
-                        obj_id=ann_all_obj_id,
+                        obj_id=ann_rail_id,
                         points=points,
                         labels=labels,
                     )
 
                     # Store railway mask
-                    last_masks_rails[ann_all_obj_id] = (out_mask_logits[0] > 0).cpu().numpy()
+                    last_masks_rails[ann_rail_id] = (out_mask_logits[0] > 0).cpu().numpy()
 
                 # Add detected objects to tracking
                 for obj_point in all_obstacles_points:
-                    ann_all_obj_id += 1
+                    ann_rail_id += 1
                     _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
                         inference_state=inference_state_rails,
                         frame_idx=0,
-                        obj_id=ann_all_obj_id,
+                        obj_id=ann_rail_id,
                         points=[obj_point],
                         labels=np.array([1], np.int32),
                     )
 
                     # Store object mask
-                    idx = list(out_obj_ids).index(ann_obj_id) if ann_obj_id in out_obj_ids else 0
-                    last_masks_rails[ann_obj_id] = (out_mask_logits[idx] > 0).cpu().numpy()
+                    idx = list(out_obj_ids).index(ann_rail_id) if ann_rail_id in out_obj_ids else 0
+                    last_masks_rails[ann_rail_id] = (out_mask_logits[idx] > 0).cpu().numpy()
 
 
             else:
@@ -574,6 +594,7 @@ def main():
                 '''
                 #FIXME da scrivere meglio
                 #For non-first frames, transfer objects from previous frame
+
                 for obj_id, mask in last_masks_rails.items():
                     # Convert mask to proper format and find center point
                     mask_array = np.asarray(mask)
@@ -589,10 +610,11 @@ def main():
                         # Use center of mass as representative point
                         center_y = int(np.mean(y_indices))
                         center_x = int(np.mean(x_indices))
-
+                        # Add object using its center point
                         # Special handling for railway (can use box instead of point)
-                        points, labels = extract_main_railway_points_and_labels(frame_rgb,main_railway_box)
                         if obj_id == 1 and main_railway_box is not None:
+                            print("C")  # TODO rimuovere
+                            points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
                             _, _, _ = video_predictor_rails.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
@@ -601,7 +623,7 @@ def main():
                                 labels=labels,
                             )
                         else:
-                            # Add object using its center point
+                            print("D")  # TODO rimuovere
                             _, _, _ = video_predictor_rails.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
@@ -622,6 +644,8 @@ def main():
             for i, obj_id in enumerate(out_obj_ids):
                 last_masks[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
             '''
+
+            print("E")  # TODO rimuovere
             #FIXME da scrivere meglio
             # Propagate all objects in current frame
             result_rails = next(video_predictor_rails.propagate_in_video(
@@ -630,12 +654,14 @@ def main():
             ))
             _, out_obj_ids, out_mask_logits = result_rails
 
+            print("F")  # TODO rimuovere
+
             # Update all masks for next frame
             for i, obj_id in enumerate(out_obj_ids):
                 last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 
             # Check for new objects periodically
-            if (frame_idx % 15 == 0 and frame_idx > 0) or (frame_idx<5 and frame_idx>0):
+            if (frame_idx % 15 == 0 and frame_idx > 0) or (frame_idx > 0 and frame_idx < 3):
                 '''
                 dino_boxes, phrases, _ = utility.grounding_Dino_analyzer(
                     frame_path, groundingdino, 'object .', device, BOX_TRESHOLD=BOX_TRESHOLD,
@@ -691,13 +717,15 @@ def main():
                 '''
                 #FIXME da scrivere meglio
                 dino_boxes, phrases, _ = utility.grounding_Dino_analyzer(
-                    frame_path, groundingdino, OBSTACLE_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
-                    TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS
-                )
+                    frame_path, groundingdino, OBSTACLE_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
+                    TEXT_TRESHOLD=TEXT_TRESHOLD_OBSTACLES, show = False,
+                )#TODO rimuovere show=true
+
+                print("G")  # TODO rimuovere
 
                 # Check each detected object
                 for i, phrase in enumerate(phrases):
-                    if phrase == 'all things':
+                    if phrases[i] == 'all things': #TODO gestire la rail separata
                         x_min, y_min, x_max, y_max = dino_boxes[i]
                         center_x = (x_min + x_max) // 2
                         center_y = (y_min + y_max) // 2
@@ -711,6 +739,8 @@ def main():
                                 if mask_array.ndim > 2:
                                     mask_array = mask_array[0]
 
+                            #TODO da gestire il fatto del contenuto in un altra maschera
+
                             # Check if point is inside any existing mask
                             if (0 <= int(center_y) < mask_array.shape[0] and
                                     0 <= int(center_x) < mask_array.shape[1] and
@@ -718,18 +748,21 @@ def main():
                                 already_tracked = True
                                 break
 
+
                         # Add new object if not already tracked
                         if not already_tracked:
-                            ann_all_obj_id += 1
-                            print(f"New object {ann_all_obj_id} detected at frame {frame_idx}")
+                            ann_rail_id += 1
+                            print(f"New object {ann_rail_id} detected at frame {frame_idx}")
+                            print("H")  # TODO rimuovere
 
                             _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
-                                obj_id=ann_all_obj_id,
+                                obj_id=ann_rail_id,
                                 points=[[center_x, center_y]],
                                 labels=np.array([1], np.int32),
                             )
+                            print("I")  # TODO rimuovere
 
                             # Re-propagate with the new object
                             result_rails = next(video_predictor_rails.propagate_in_video(
@@ -737,6 +770,7 @@ def main():
                                 start_frame_idx=0
                             ))
                             _, out_obj_ids, out_mask_logits = result_rails
+                            print("L")  # TODO rimuovere
 
                             # Update masks dictionary
                             for i, obj_id in enumerate(out_obj_ids):

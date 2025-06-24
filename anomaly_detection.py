@@ -184,44 +184,73 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes):
     found = True
 
     #Version 2
-    number_of_left_points = 0
+    #TODO IDea: trovo prima a parte i due punti della base dele rail, poi trovo i punti dopo scorrendo l'indice su height maggiore e la x tra la x precedente +- 20 px
+    #Finding the two points of the rails at the base of the image
+    left_rail_base_point = [int(wc/2),hc]
+    right_rail_base_point = [int(wc/2),hc]
+    found = False
     scanning_height = y + hc
+    while found == False:
+        for i in range(0,int(wc/2),1):
+            if black_and_mask[scanning_height][x+i][1]==255:
+                left_rail_base_point[1] = scanning_height
+                left_rail_base_point[0] = i
+                found = True
+                break
+    found = False
+    while found == False:
+        for i in range(wc,int(wc/2),-1):
+            if black_and_mask[scanning_height][x+i][1]==255:
+                right_rail_base_point[1] = scanning_height
+                right_rail_base_point[0] = i
+                found = True
+                break
+
+    number_of_left_points = 0
     boundaries = numpy.empty(2)
     while found == True:
         found = False
-        for i in range(0, int(wc / 2), 1):  #FIXME non fino alla metà di wc, MA DA PENSARE PER BENE COME FARE!!!
-            if black_and_mask[scanning_height][x + i][1] == 255:  # FIXME ricavare pixel
+        for i in range(left_rail_base_point[0]-25, left_rail_base_point[0]+25, 1):
+            if black_and_mask[scanning_height][x + i][1] == 255:
                 boundaries[0]=i
                 j=i
                 while black_and_mask[scanning_height,x+j][1]==255:
                     j=j+1
                 boundaries[1]=j-1
-                points.append([x + int((boundaries[0]+boundaries[1])/2), scanning_height])
+                left_rail_base_point[0]=int((boundaries[0]+boundaries[1])/2)
+                left_rail_base_point[1]=scanning_height
+                points.append([x+left_rail_base_point[0], left_rail_base_point[1]])
                 offset = 4
                 neg_points.append([x + i - offset * 10, scanning_height])
                 number_of_left_points = number_of_left_points + 1
                 found = True
                 break
-        scanning_height = scanning_height - 15
+        if scanning_height <= (y + hc / 2):
+            found=False
+        scanning_height = scanning_height - 25
     number_of_right_points = 0
     scanning_height = y + hc
     found = True
     while found == True:
         found = False
-        for i in range(wc, int(wc / 2), -1):
+        for i in range(right_rail_base_point[0]+25, right_rail_base_point[0]-25, -1):
             if black_and_mask[scanning_height][x + i][1] == 255:
                 boundaries[0] = i
                 j = i
                 while black_and_mask[scanning_height,x+j][1]==255:
                     j=j-1
                 boundaries[1] = j + 1
-                points.append([x + int((boundaries[0] + boundaries[1]) / 2), scanning_height])
+                right_rail_base_point[0] = int((boundaries[0] + boundaries[1]) / 2)
+                right_rail_base_point[1] = scanning_height
+                points.append([x+right_rail_base_point[0], right_rail_base_point[1]])
                 offset = 4
                 neg_points.append([x + i + offset * 10, scanning_height])
                 number_of_right_points = number_of_right_points + 1
                 found = True
                 break
-        scanning_height = scanning_height - 10
+        if scanning_height <= (y + hc / 2):
+            found = False
+        scanning_height = scanning_height - 25
     #Searching for couples of points to then add middlepoints between rails
     cicles = number_of_left_points
     if number_of_left_points>number_of_right_points:

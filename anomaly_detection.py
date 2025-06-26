@@ -1,6 +1,7 @@
 import numpy
 from PIL.ImageChops import offset
 from groundingdino.util.inference import load_model, load_image
+from scipy.interpolate import interp1d, make_interp_spline
 import os
 import torch
 from PIL import Image
@@ -11,6 +12,7 @@ import gc
 import time
 from sam2.build_sam import build_sam2, build_sam2_video_predictor
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator, SAM2ImagePredictor
+from ultralytics import SAM
 
 import utility
 from gpu_utility import set_device
@@ -320,6 +322,7 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     points.append([x + int(wc / 2) + int(wc / 4), y + hc - 60])
     points.append([x + int(wc / 2), y + hc - 80])
     '''
+
     # TODO Da provare a promptare i punti nel dettaglio dei punto appartenenti alla rail e alla carreggiata nel mezzo
     #TODO Calcolare la prospettiva dell'immagine, sapendo il parallelismo dei due binari e langolo che hanno/un computer vision che lo capisce da solo
 
@@ -328,6 +331,88 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     labels = np.concatenate((pos_labels, neg_labels))
 
     points = np.concatenate((points, neg_points))
+    bl_point = neg_points[0]
+    br_point = neg_points[0]
+    tl_point = neg_points[0]
+    tr_point = neg_points[0]
+    min_height = 1000
+    max_height = 0
+    top_points = []
+    bottom_points = []
+    for i in range(len(neg_points)):
+        if neg_points[i][1] < min_height:
+            min_height = neg_points[i][1]
+        elif neg_points[i][1] > max_height:
+            max_height = neg_points[i][1]
+
+    for i in range(len(neg_points)):
+        if neg_points[i][1] == min_height:
+            top_points.append(neg_points[i])
+        elif neg_points[i][1] == max_height:
+            bottom_points.append(neg_points[i])
+
+    min_x = 1000
+    max_x = 0
+    index_tl = 0
+    index_tr = 0
+    for i in range(len(top_points)):
+        if top_points[i][0] < min_x:
+            min_x = top_points[i][0]
+            index_tl = i
+        elif top_points[i][0] > max_x:
+            max_x = top_points[i][0]
+            index_tr = i
+    tr_point = top_points[index_tr]
+    tl_point = top_points[index_tl]
+
+    min_x = 1000
+    max_x = 0
+    index_bl = 0
+    index_br = 0
+    for i in range(len(bottom_points)):
+        if bottom_points[i][0] < min_x:
+            min_x = bottom_points[i][0]
+            index_bl = i
+        elif bottom_points[i][0] > max_x:
+            max_x = bottom_points[i][0]
+            index_br = i
+    br_point = bottom_points[index_br]
+    bl_point = bottom_points[index_bl]
+
+    print(bl_point, br_point, tl_point, tr_point)
+
+    #Perspective trensformation
+    starting_points = np.array([
+        tl_point,
+        tr_point,
+        bl_point,
+        br_point
+    ], dtype=np.float32)
+
+    T_width = int(br_point[0] - bl_point[0])
+    T_height = int(tl_point[1] - bl_point[1])
+
+    ending_points = np.array([
+        [0, 0],
+        [T_width, 0],
+        [0, T_height],
+        [T_width, T_height]
+    ], dtype=np.float32)
+
+    # Compute transformation matrix (THIS is the correct function)
+    T = cv2.getPerspectiveTransform(starting_points, ending_points)
+
+    # Convert image
+    image_to_trasf = cv2.cvtColor(image_source, cv2.COLOR_BGR2RGB)
+
+    # Apply the perspective warp
+    imgTrans = cv2.warpPerspective(image_to_trasf, T, (T_width, T_height))
+
+    # Display result
+    plt.figure()
+    plt.imshow(imgTrans)
+    plt.axis("off")
+    plt.show()
 
     IMAGE_COPY = image_source.copy()
     i=0
@@ -339,6 +424,180 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
         i = i+1
     cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
     cv2.waitKey(0)
+
+    return points, labels
+
+def media_robusta(valori, epsilon=1e-6):
+    mediana = np.median(valori)
+    distanze = [abs(x - mediana) + epsilon for x in valori]
+    pesi = [1 / d for d in distanze]
+    somma_pesi = sum(pesi)
+    pesi_normalizzati = [p / somma_pesi for p in pesi]
+    return sum(x * w for x, w in zip(valori, pesi_normalizzati))
+
+def extract_main_internal_railway_points_and_labels(image_source, gd_box):
+    #TODO Come fare per mantenere stabile la forma della mschera dei binari
+    #Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
+
+    width = image_source.shape[1]
+    height = image_source.shape[0]
+    image_midde_point = int(width / 2)
+    gd_width = gd_box[3]-gd_box[1]
+    gd_height = gd_box[2]-gd_box[0]
+    x = gd_box[1]
+    y = gd_box[0]
+    gdbox_midde_point = x+int(gd_width / 2)
+
+    # -----------------CANNY EDGES--------------------
+    # Convert to graycsale
+    image_cropped = image_source[int(gd_box[1]):int(gd_box[3]), int(gd_box[0]):int(gd_box[2])]
+
+    img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
+
+    # Blur the image for better edge detection
+    img_blur = cv2.GaussianBlur(img_gray, (9, 9), 0)
+
+    # Canny Edge Detection
+    edges = cv2.Canny(image=img_blur, threshold1=50, threshold2=90)  # Canny Edge Detection
+    #Display Canny Edge Detection Image
+    cv2.imshow('Canny Edge Detection', edges)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # FIXME Come fare per evitare che gli edges rilevati non siano altro che le rails?
+    # -----------------HUGS EDGES--------------------
+    x = int(gd_box[0])
+    y = int(gd_box[1])
+    hc = image_cropped.shape[0]
+    wc = image_cropped.shape[1]
+
+    # Overlaps the edge detection of the cropped GD detection box onto the fullsize image, full black so that there are no other contours except the ones of Canny
+    blacked_image = np.zeros_like(image_source)
+    blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
+    blacked_image[y:y + hc, x:x + wc] = edges
+
+    # Step 3: Find contours from the edge image
+    contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Step 4: Draw contours on a blank canvas (for visualization)
+    output = np.zeros_like(blacked_image)
+    cv2.drawContours(output, contours, -1, (255), 1)
+
+    # Optional: Filter meaningful curves by length or area
+    meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 100]
+
+    # Step 5: Draw meaningful contours separately
+    # filtered_output = np.zeros_like(img_gray)
+    # cv2.drawContours(filtered_output, meaningful_contours, -1, (255), 1)
+    # cv2.imshow('Countours', filtered_output)
+    # cv2.waitKey(0)
+    # Overlay curves on the original color image
+    overlay = image_source.copy()
+    cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
+
+    # Showing final edge detection result of the rails
+    cv2.imshow('Countours', overlay)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    black_and_mask = np.zeros_like(image_source)
+    cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
+    x_mask_points = np.array([])
+    y_mask_points = np.array([])
+    for j in range(y+0,y+hc,3):
+        for i in range(x,x+wc,3):
+            if black_and_mask[j][i][1] == 255:
+                x_mask_points = np.append(x_mask_points, [i])
+                y_mask_points = np.append(y_mask_points, [j])
+
+    x_mask_points.sort()
+    y_mask_points[::-1].sort()
+    print("x_mask_points",x_mask_points)
+    print("y_mask_points",y_mask_points)
+
+    #Provo ad interpolare i punti in una curva
+    X_Y_Spline = interp1d(x_mask_points, y_mask_points)
+    X_ = np.linspace(x_mask_points.min(), x_mask_points.max(), 500)
+    Y_ = X_Y_Spline(X_)
+
+    # Crea lista di punti interi (x, y)
+    pts = np.array([
+        [int(round(x)), int(round(y))]
+        for x, y in zip(X_, Y_)
+        if 0 <= int(round(x)) < image_source.shape[1] and 0 <= int(round(y)) < image_source.shape[0]
+    ])
+
+    # Ridisegna immagine con la curva
+    image_with_curve = image_source.copy()
+
+    # Ridimensiona per OpenCV: (N, 1, 2)
+    pts = pts.reshape((-1, 1, 2))
+
+    # Disegna la linea verde
+    cv2.polylines(image_with_curve, [pts], isClosed=False, color=(0, 255, 0), thickness=2)
+
+    # Mostra il risultato
+    cv2.imshow('Curve on Image', image_with_curve)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # TODO Le strisce degli edge potrebbero non essere abbastanza lunghe per superare il limite minimo di 300 (per esempio il binario è interrotto da un ostacolo) o l'edge potrebbe fondersi ad un altro elemento (tipo un ostacolo)
+
+    # ----------------Extracting some points from mask -------------------
+    # Creating a black image with only the curves of the mask
+
+    black_and_mask = np.zeros_like(image_source)
+    cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
+    points = []
+    # Trying negative label points outside the main rails to refine sam segmentation
+    neg_points = []
+    found = True
+
+    # Version 2
+    # TODO IDea: trovo prima a parte i due punti della base dele rail, poi trovo i punti dopo scorrendo l'indice su height maggiore e la x tra la x precedente +- 20 px
+    # Finding the two points of the rails at the base of the image
+    left_rail_base_point = [int(wc / 2), hc]
+    right_rail_base_point = [int(wc / 2), hc]
+    found = False
+    scanning_height = y + hc
+    while found == False:
+        for i in range(0, int(wc / 2), 1):
+            if black_and_mask[scanning_height][x + i][1] == 255:
+                left_rail_base_point[1] = scanning_height
+                left_rail_base_point[0] = i
+                found = True
+                break
+    found = False
+    while found == False:
+        for i in range(wc, int(wc / 2), -1):
+            if black_and_mask[scanning_height][x + i][1] == 255:  # FIXME il problema che si blocca è circa qua
+                right_rail_base_point[1] = scanning_height
+                right_rail_base_point[0] = i
+                found = True
+                break
+
+    edges_rails_midde_point = x + int((left_rail_base_point[0] + right_rail_base_point[0]) / 2)
+
+    #Faccio la media dei tre centri calcolati sopra
+    average_midde_point = media_robusta([gdbox_midde_point, edges_rails_midde_point, image_midde_point])    #TODO potrei dall'immagine degli edge, tronacre fuori gli edge al di fuori della box, poi interpolare tutti i punti verdi con una funzione, e mi dovrebbe dare all'incirca una curva dei binari, così posso aggiungere punti più avanti
+
+    points = []
+    points.append([average_midde_point, height-10])
+    points.append([average_midde_point-50,height-10])
+    points.append([average_midde_point+50,height-10])
+    points.append([average_midde_point, height-20])
+    points.append([average_midde_point-50, height-20])
+    points.append([average_midde_point+50, height-20])
+    points.append([average_midde_point, height - 160])
+    labels = np.ones(len(points))
+
+    IMAGE_COPY = image_source.copy()
+    i = 0
+    for p in points:
+        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (0, 255, 0), thickness=2)
+        i = i + 1
+    #cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
+    #cv2.waitKey(0)
 
     return points, labels
 
@@ -438,9 +697,6 @@ def main():
             # Convert to RGB for visualization
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            print(test) #TODO rimuovere
-            test +=1
-
             # Initialize new state for this frame
             torch.cuda.empty_cache()
             gc.collect()
@@ -527,13 +783,16 @@ def main():
 
                 # Add railway to tracking
                 if main_railway_box is not None:
-                    points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
+                    #points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
+                    points, labels = extract_main_internal_railway_points_and_labels(frame_rgb, main_railway_box)
+
                     _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
                         inference_state=inference_state_rails,
                         frame_idx=0,
                         obj_id=ann_rail_id,
                         points=points,
                         labels=labels,
+                        box=main_railway_box,
                     )
 
                     # Store railway mask
@@ -613,17 +872,17 @@ def main():
                         # Add object using its center point
                         # Special handling for railway (can use box instead of point)
                         if obj_id == 1 and main_railway_box is not None:
-                            print("C")  # TODO rimuovere
-                            points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
+                            #points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
+                            points, labels = extract_main_internal_railway_points_and_labels(frame_rgb,main_railway_box)
                             _, _, _ = video_predictor_rails.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
                                 obj_id=obj_id,
                                 points=points,
                                 labels=labels,
+                                box=main_railway_box,
                             )
                         else:
-                            print("D")  # TODO rimuovere
                             _, _, _ = video_predictor_rails.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
@@ -645,7 +904,6 @@ def main():
                 last_masks[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
             '''
 
-            print("E")  # TODO rimuovere
             #FIXME da scrivere meglio
             # Propagate all objects in current frame
             result_rails = next(video_predictor_rails.propagate_in_video(
@@ -654,7 +912,6 @@ def main():
             ))
             _, out_obj_ids, out_mask_logits = result_rails
 
-            print("F")  # TODO rimuovere
 
             # Update all masks for next frame
             for i, obj_id in enumerate(out_obj_ids):
@@ -721,7 +978,6 @@ def main():
                     TEXT_TRESHOLD=TEXT_TRESHOLD_OBSTACLES, show = False,
                 )#TODO rimuovere show=true
 
-                print("G")  # TODO rimuovere
 
                 # Check each detected object
                 for i, phrase in enumerate(phrases):
@@ -753,7 +1009,6 @@ def main():
                         if not already_tracked:
                             ann_rail_id += 1
                             print(f"New object {ann_rail_id} detected at frame {frame_idx}")
-                            print("H")  # TODO rimuovere
 
                             _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
                                 inference_state=inference_state_rails,
@@ -762,7 +1017,6 @@ def main():
                                 points=[[center_x, center_y]],
                                 labels=np.array([1], np.int32),
                             )
-                            print("I")  # TODO rimuovere
 
                             # Re-propagate with the new object
                             result_rails = next(video_predictor_rails.propagate_in_video(
@@ -770,7 +1024,6 @@ def main():
                                 start_frame_idx=0
                             ))
                             _, out_obj_ids, out_mask_logits = result_rails
-                            print("L")  # TODO rimuovere
 
                             # Update masks dictionary
                             for i, obj_id in enumerate(out_obj_ids):

@@ -1,7 +1,7 @@
 import numpy
 from PIL.ImageChops import offset
 from groundingdino.util.inference import load_model, load_image
-from scipy.interpolate import interp1d, make_interp_spline
+from scipy.interpolate import interp1d, make_interp_spline, splprep, splev
 import os
 import torch
 from PIL import Image
@@ -13,6 +13,7 @@ import time
 from sam2.build_sam import build_sam2, build_sam2_video_predictor
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator, SAM2ImagePredictor
 from ultralytics import SAM
+from scipy.signal import savgol_filter
 
 import utility
 from gpu_utility import set_device
@@ -435,8 +436,9 @@ def media_robusta(valori, epsilon=1e-6):
     pesi_normalizzati = [p / somma_pesi for p in pesi]
     return sum(x * w for x, w in zip(valori, pesi_normalizzati))
 
-def extract_main_internal_railway_points_and_labels(image_source, gd_box):
+def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):      #TODO passare la maschera del binario precedentemente segmentato per migliorare la curva degli edges
     #TODO Come fare per mantenere stabile la forma della mschera dei binari
+    #TODO potrei riprovare a fare segment all nella box di GD
     #Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
 
     width = image_source.shape[1]
@@ -458,11 +460,11 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box):
     img_blur = cv2.GaussianBlur(img_gray, (9, 9), 0)
 
     # Canny Edge Detection
-    edges = cv2.Canny(image=img_blur, threshold1=50, threshold2=90)  # Canny Edge Detection
+    edges = cv2.Canny(image=img_blur, threshold1=70, threshold2=90)  # Canny Edge Detection
     #Display Canny Edge Detection Image
-    cv2.imshow('Canny Edge Detection', edges)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    #cv2.imshow('Canny Edge Detection', edges)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
 
     # FIXME Come fare per evitare che gli edges rilevati non siano altro che le rails?
     # -----------------HUGS EDGES--------------------
@@ -484,7 +486,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box):
     cv2.drawContours(output, contours, -1, (255), 1)
 
     # Optional: Filter meaningful curves by length or area
-    meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 100]
+    meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 200]
 
     # Step 5: Draw meaningful contours separately
     # filtered_output = np.zeros_like(img_gray)
@@ -496,50 +498,79 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box):
     cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
 
     # Showing final edge detection result of the rails
-    cv2.imshow('Countours', overlay)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    #cv2.imshow('Countours', overlay)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
 
     black_and_mask = np.zeros_like(image_source)
     cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
+
+    #From mask of the railway obtaining the points to segment
+
+    mask_image = None
+
+    for obj_id, mask in rails_masks.items():
+        h, w = mask.shape[-2:]
+        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
+        mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+        break
+
+    '''
     x_mask_points = np.array([])
     y_mask_points = np.array([])
-    for j in range(y+0,y+hc,3):
+    mask_middle_points = np.array([])
+    avg_array = np.array([])
+    y_of_avg_array = np.array([])
+    for j in range(y+hc,y,-3):
         for i in range(x,x+wc,3):
             if black_and_mask[j][i][1] == 255:
                 x_mask_points = np.append(x_mask_points, [i])
-                y_mask_points = np.append(y_mask_points, [j])
+        if len(x_mask_points) > 0:
+            avg_x = int(sum(x_mask_points) / len(x_mask_points))
+            mask_middle_points = np.append(mask_middle_points, [avg_x,j])
+            avg_array = np.append(avg_array, avg_x)
+            y_of_avg_array = np.append(y_of_avg_array, j)
+        x_mask_points = np.array([])
 
-    x_mask_points.sort()
-    y_mask_points[::-1].sort()
-    print("x_mask_points",x_mask_points)
-    print("y_mask_points",y_mask_points)
+    # Reshape the flat array into (N, 2)
+    curve_points = mask_middle_points.reshape((-1, 2))
 
-    #Provo ad interpolare i punti in una curva
-    X_Y_Spline = interp1d(x_mask_points, y_mask_points)
-    X_ = np.linspace(x_mask_points.min(), x_mask_points.max(), 500)
-    Y_ = X_Y_Spline(X_)
+    # Convert to int32 (required by OpenCV)
+    curve_points = np.round(curve_points).astype(np.int32)
 
-    # Crea lista di punti interi (x, y)
-    pts = np.array([
-        [int(round(x)), int(round(y))]
-        for x, y in zip(X_, Y_)
-        if 0 <= int(round(x)) < image_source.shape[1] and 0 <= int(round(y)) < image_source.shape[0]
-    ])
+    # Reshape to (N, 1, 2) as required by cv2.polylines
+    curve_points = curve_points.reshape((-1, 1, 2))
 
-    # Ridisegna immagine con la curva
-    image_with_curve = image_source.copy()
+    image_copy = np.copy(image_source)
+    # Draw the curve
+    cv2.polylines(image_copy, [curve_points], isClosed=False, color=(0, 255, 0), thickness=2)
 
-    # Ridimensiona per OpenCV: (N, 1, 2)
-    pts = pts.reshape((-1, 1, 2))
-
-    # Disegna la linea verde
-    cv2.polylines(image_with_curve, [pts], isClosed=False, color=(0, 255, 0), thickness=2)
-
-    # Mostra il risultato
-    cv2.imshow('Curve on Image', image_with_curve)
+    # Show image
+    cv2.imshow("Image with Curve", image_copy)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+
+    xhat = savgol_filter(avg_array, 51, 3)
+    savol_array = []
+    x_avg_array_filtered = np.array(xhat)
+    for i in range(len(y_of_avg_array)):
+        savol_array.append([x_avg_array_filtered[i],y_of_avg_array[i]])
+
+    curve = np.array(savol_array, dtype=np.float32)
+    curve = np.round(curve).astype(np.int32)
+
+    # Reshape for cv2.polylines: (N, 1, 2)
+    curve = curve.reshape((-1, 1, 2))
+
+    image_copy = np.copy(image_source)
+    # Draw the curve
+    cv2.polylines(image_copy, [curve], isClosed=False, color=(0, 255, 0), thickness=2)
+
+    # Show image
+    cv2.imshow("Image with savol_array", image_copy)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    '''
 
     # TODO Le strisce degli edge potrebbero non essere abbastanza lunghe per superare il limite minimo di 300 (per esempio il binario è interrotto da un ostacolo) o l'edge potrebbe fondersi ad un altro elemento (tipo un ostacolo)
 
@@ -553,52 +584,123 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box):
     neg_points = []
     found = True
 
-    # Version 2
-    # TODO IDea: trovo prima a parte i due punti della base dele rail, poi trovo i punti dopo scorrendo l'indice su height maggiore e la x tra la x precedente +- 20 px
-    # Finding the two points of the rails at the base of the image
-    left_rail_base_point = [int(wc / 2), hc]
-    right_rail_base_point = [int(wc / 2), hc]
-    found = False
-    scanning_height = y + hc
-    while found == False:
-        for i in range(0, int(wc / 2), 1):
-            if black_and_mask[scanning_height][x + i][1] == 255:
-                left_rail_base_point[1] = scanning_height
-                left_rail_base_point[0] = i
-                found = True
-                break
-    found = False
-    while found == False:
-        for i in range(wc, int(wc / 2), -1):
-            if black_and_mask[scanning_height][x + i][1] == 255:  # FIXME il problema che si blocca è circa qua
-                right_rail_base_point[1] = scanning_height
-                right_rail_base_point[0] = i
-                found = True
-                break
+    if mask_image is None:
+        # Version 2
+        # TODO IDea: trovo prima a parte i due punti della base dele rail, poi trovo i punti dopo scorrendo l'indice su height maggiore e la x tra la x precedente +- 20 px
+        # Finding the two points of the rails at the base of the image
+        left_rail_base_point = [int(wc / 2), hc]
+        right_rail_base_point = [int(wc / 2), hc]
+        found = False
+        scanning_height = y + hc
+        while found == False:
+            for i in range(0, int(wc / 2), 1):
+                if black_and_mask[scanning_height][x + i][1] == 255:
+                    left_rail_base_point[1] = scanning_height
+                    left_rail_base_point[0] = i
+                    found = True
+                    break
+        found = False
+        while found == False:
+            for i in range(wc, int(wc / 2), -1):
+                if black_and_mask[scanning_height][x + i][1] == 255:  # FIXME il problema che si blocca è circa qua
+                    right_rail_base_point[1] = scanning_height
+                    right_rail_base_point[0] = i
+                    found = True
+                    break
 
-    edges_rails_midde_point = x + int((left_rail_base_point[0] + right_rail_base_point[0]) / 2)
+        edges_rails_midde_point = x + int((left_rail_base_point[0] + right_rail_base_point[0]) / 2)
 
-    #Faccio la media dei tre centri calcolati sopra
-    average_midde_point = media_robusta([gdbox_midde_point, edges_rails_midde_point, image_midde_point])    #TODO potrei dall'immagine degli edge, tronacre fuori gli edge al di fuori della box, poi interpolare tutti i punti verdi con una funzione, e mi dovrebbe dare all'incirca una curva dei binari, così posso aggiungere punti più avanti
+        #Faccio la media dei tre centri calcolati sopra
+        average_midde_point = media_robusta([gdbox_midde_point, edges_rails_midde_point, image_midde_point])    #TODO potrei dall'immagine degli edge, tronacre fuori gli edge al di fuori della box, poi interpolare tutti i punti verdi con una funzione, e mi dovrebbe dare all'incirca una curva dei binari, così posso aggiungere punti più avanti
 
-    points = []
-    points.append([average_midde_point, height-10])
-    points.append([average_midde_point-50,height-10])
-    points.append([average_midde_point+50,height-10])
-    points.append([average_midde_point, height-20])
-    points.append([average_midde_point-50, height-20])
-    points.append([average_midde_point+50, height-20])
-    points.append([average_midde_point, height - 160])
-    labels = np.ones(len(points))
+        points = []
+        points.append([average_midde_point, height-10])
+        #points.append([average_midde_point-50,height-10])
+        #points.append([average_midde_point+50,height-10])
+        points.append([average_midde_point, height-40])
+        #points.append([average_midde_point-50, height-20])
+        #points.append([average_midde_point+50, height-20])
+        points.append([average_midde_point, height - 100])
+        points.append([average_midde_point, height - 140])
+        points.append([average_midde_point, height - 180])
+    else:
+        x_mask_points = np.array([])
+        y_mask_points = np.array([])
+        mask_middle_points = np.array([])
+        avg_array = np.array([])
+        y_of_avg_array = np.array([])
+        for j in range(y + hc, y, -10):
+            for i in range(x, x + wc, 10):
+                if mask_image[j][i][0] != 0 or mask_image[j][i][1] != 0 or mask_image[j][i][2] != 0:
+                    x_mask_points = np.append(x_mask_points, [i])
+            if len(x_mask_points) > 0:
+                avg_x = int(sum(x_mask_points) / len(x_mask_points))
+                mask_middle_points = np.append(mask_middle_points, [avg_x, j])
+                avg_array = np.append(avg_array, avg_x)
+                y_of_avg_array = np.append(y_of_avg_array, j)
+            x_mask_points = np.array([])
 
-    IMAGE_COPY = image_source.copy()
-    i = 0
-    for p in points:
-        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (0, 255, 0), thickness=2)
-        i = i + 1
-    #cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
+        # Reshape the flat array into (N, 2)
+        curve_points = mask_middle_points.reshape((-1, 2))
+
+        # Convert to int32 (required by OpenCV)
+        curve_points = np.round(curve_points).astype(np.int32)
+
+        # Reshape to (N, 1, 2) as required by cv2.polylines
+        curve_points = curve_points.reshape((-1, 1, 2))
+
+        image_copy = np.copy(image_source)
+        # Draw the curve
+        cv2.polylines(image_copy, [curve_points], isClosed=False, color=(0, 255, 0), thickness=2)
+
+        # Show image pre filtering
+        #cv2.imshow("Image with Curve", image_copy)
+        #cv2.waitKey(0)
+        #cv2.destroyAllWindows()
+
+        xhat = savgol_filter(avg_array, 10, 3)
+        savol_array = []
+        x_avg_array_filtered = np.array(xhat)
+        for i in range(len(y_of_avg_array)):
+            savol_array.append([x_avg_array_filtered[i], y_of_avg_array[i]])
+
+        curve = np.array(savol_array, dtype=np.float32)
+        curve = np.round(curve).astype(np.int32)
+
+        # Reshape for cv2.polylines: (N, 1, 2)
+        curve = curve.reshape((-1, 1, 2))
+
+        image_copy = np.copy(image_source)
+        # Draw the curve
+        cv2.polylines(image_copy, [curve], isClosed=False, color=(0, 255, 0), thickness=2)
+
+        # Show image after savol filter
+        #cv2.imshow("Image with savol_array", image_copy)
+        #cv2.waitKey(0)
+        #cv2.destroyAllWindows()
+
+        #prendo il savola array e ne aggiungo una copia a destra e sinistra e tolgo gli estremi
+        savol_array_left = savol_array.copy()
+        savol_array_right = savol_array.copy()
+        savol_array_expanded = []
+        for i in range(len(savol_array)):
+            if i>0 and i<len(savol_array_left)-1 and (i%6) == 0:
+                #savol_array_expanded.append(savol_array[i])
+                current_y_in_rail_box = savol_array[i][1] - y
+                savol_array_expanded.append([savol_array[i][0]-int(current_y_in_rail_box*0.12), savol_array[i][1]])
+                savol_array_expanded.append([savol_array[i][0]+int(current_y_in_rail_box*0.12), savol_array[i][1]])
+        points = np.array(savol_array_expanded)
+
+    #Diplaying points
+    #IMAGE_COPY = image_source.copy()
+    #i = 0
+    #for p in points:
+    #    cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (0, 255, 0), thickness=2)
+    #    i = i + 1
+    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
     #cv2.waitKey(0)
 
+    labels = np.ones(len(points))
     return points, labels
 
 # main
@@ -784,7 +886,7 @@ def main():
                 # Add railway to tracking
                 if main_railway_box is not None:
                     #points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
-                    points, labels = extract_main_internal_railway_points_and_labels(frame_rgb, main_railway_box)
+                    points, labels = extract_main_internal_railway_points_and_labels(frame_rgb, main_railway_box,last_masks_rails)
 
                     _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
                         inference_state=inference_state_rails,
@@ -873,7 +975,7 @@ def main():
                         # Special handling for railway (can use box instead of point)
                         if obj_id == 1 and main_railway_box is not None:
                             #points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
-                            points, labels = extract_main_internal_railway_points_and_labels(frame_rgb,main_railway_box)
+                            points, labels = extract_main_internal_railway_points_and_labels(frame_rgb,main_railway_box,last_masks_rails)
                             _, _, _ = video_predictor_rails.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
@@ -1039,7 +1141,7 @@ def main():
                 key = cv2.waitKey(1)
                 if key == ord('q'):
                     raise KeyboardInterrupt
-            if args.save_frames:
+            if True:  #to remove True in args.save_frames
                 plt.savefig(os.path.join(args.output_path, f"frame_{frame_idx:06d}.jpg"))
             plt.close()
 

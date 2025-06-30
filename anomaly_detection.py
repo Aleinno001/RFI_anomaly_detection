@@ -141,7 +141,6 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     # cv2.waitKey(0)
     # cv2.destroyAllWindows()
 
-    #FIXME Come fare per evitare che gli edges rilevati non siano altro che le rails?
     # -----------------HUGS EDGES--------------------
     x = int(gd_boxes[0])
     y = int(gd_boxes[1])
@@ -172,8 +171,6 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     overlay = image_source.copy()
     cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
 
-    #TODO Le strisce degli edge potrebbero non essere abbastanza lunghe per superare il limite minimo di 300 (per esempio il binario è interrotto da un ostacolo) o l'edge potrebbe fondersi ad un altro elemento (tipo un ostacolo)
-
     # Showing final edge detection result of the rails
     if frame_index == 40 or frame_index == 0:
         cv2.imshow('Countours', overlay)
@@ -191,7 +188,6 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     found = True
 
     #Version 2
-    #TODO IDea: trovo prima a parte i due punti della base dele rail, poi trovo i punti dopo scorrendo l'indice su height maggiore e la x tra la x precedente +- 20 px
     #Finding the two points of the rails at the base of the image
     left_rail_base_point = [int(wc/2),hc]
     right_rail_base_point = [int(wc/2),hc]
@@ -207,7 +203,7 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     found = False
     while found == False:
         for i in range(wc,int(wc/2),-1):
-            if black_and_mask[scanning_height][x+i][1]==255:        #FIXME il problema che si blocca è circa qua
+            if black_and_mask[scanning_height][x+i][1]==255:
                 right_rail_base_point[1] = scanning_height
                 right_rail_base_point[0] = i
                 found = True
@@ -324,8 +320,9 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     points.append([x + int(wc / 2), y + hc - 80])
     '''
 
-    # TODO Da provare a promptare i punti nel dettaglio dei punto appartenenti alla rail e alla carreggiata nel mezzo
     #TODO Calcolare la prospettiva dell'immagine, sapendo il parallelismo dei due binari e langolo che hanno/un computer vision che lo capisce da solo
+    #TODO Magari riesco a risolvere il problema legato al fatto che prende più binari usando la prospettiva
+
 
     pos_labels = np.ones(len(points))
     neg_labels = np.zeros(len(neg_points))
@@ -436,18 +433,17 @@ def media_robusta(valori, epsilon=1e-6):
     pesi_normalizzati = [p / somma_pesi for p in pesi]
     return sum(x * w for x, w in zip(valori, pesi_normalizzati))
 
-def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):      #TODO passare la maschera del binario precedentemente segmentato per migliorare la curva degli edges
+def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):
     #TODO Come fare per mantenere stabile la forma della mschera dei binari
-    #TODO potrei riprovare a fare segment all nella box di GD
     #Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
 
     width = image_source.shape[1]
     height = image_source.shape[0]
     image_midde_point = int(width / 2)
-    gd_width = gd_box[3]-gd_box[1]
-    gd_height = gd_box[2]-gd_box[0]
-    x = gd_box[1]
-    y = gd_box[0]
+    gd_width = gd_box[2]-gd_box[0]
+    gd_height = gd_box[3]-gd_box[1]
+    x = gd_box[0]
+    y = gd_box[1]
     gdbox_midde_point = x+int(gd_width / 2)
 
     # -----------------CANNY EDGES--------------------
@@ -457,10 +453,10 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
 
     # Blur the image for better edge detection
-    img_blur = cv2.GaussianBlur(img_gray, (9, 9), 0)
+    img_blur = cv2.GaussianBlur(img_gray, (7, 7), 0)
 
     # Canny Edge Detection
-    edges = cv2.Canny(image=img_blur, threshold1=70, threshold2=90)  # Canny Edge Detection
+    edges = cv2.Canny(image=img_blur, threshold1=60, threshold2=90)  # Canny Edge Detection
     #Display Canny Edge Detection Image
     #cv2.imshow('Canny Edge Detection', edges)
     #cv2.waitKey(0)
@@ -585,44 +581,65 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     found = True
 
     if mask_image is None:
-        # Version 2
-        # TODO IDea: trovo prima a parte i due punti della base dele rail, poi trovo i punti dopo scorrendo l'indice su height maggiore e la x tra la x precedente +- 20 px
-        # Finding the two points of the rails at the base of the image
         left_rail_base_point = [int(wc / 2), hc]
         right_rail_base_point = [int(wc / 2), hc]
-        found = False
+        foundLeft = False
         scanning_height = y + hc
-        while found == False:
+        #TODO invece di cercare solo due pixel alla base forse è meglio prendere tutta una riga e fare la deia dei pixel degli edge
+
+        average_points = []
+        average_levels = []
+        for j in range(y+hc,y+hc-int(0.03*y+hc),-1):
+            for i in range(x,x+wc,3):
+                if black_and_mask[j][i][1] == 255:
+                    average_points.append(i)
+            if len(average_points) > 0:
+                average_levels.append(int(sum(average_points) / len(average_points)))
+
+        '''
+        while foundLeft == False and scanning_height > y+hc-20:      #TODO rendere il "20" pixel parametrico
             for i in range(0, int(wc / 2), 1):
                 if black_and_mask[scanning_height][x + i][1] == 255:
                     left_rail_base_point[1] = scanning_height
                     left_rail_base_point[0] = i
-                    found = True
+                    foundLeft = True
                     break
-        found = False
-        while found == False:
+            scanning_height = scanning_height - 1
+
+        foundRight = False
+        while foundRight == False and scanning_height > y+hc-20:
             for i in range(wc, int(wc / 2), -1):
                 if black_and_mask[scanning_height][x + i][1] == 255:  # FIXME il problema che si blocca è circa qua
                     right_rail_base_point[1] = scanning_height
                     right_rail_base_point[0] = i
-                    found = True
+                    foundRight = True
                     break
+            scanning_height = scanning_height - 1
+        '''
 
-        edges_rails_midde_point = x + int((left_rail_base_point[0] + right_rail_base_point[0]) / 2)
+        #if foundLeft and foundRight:
+        if len(average_levels) > 0:
+            #edges_rails_midde_point = x + int((left_rail_base_point[0] + right_rail_base_point[0]) / 2)
+            edges_rails_midde_point = int(sum(average_points) / len(average_points))
 
-        #Faccio la media dei tre centri calcolati sopra
-        average_midde_point = media_robusta([gdbox_midde_point, edges_rails_midde_point, image_midde_point])    #TODO potrei dall'immagine degli edge, tronacre fuori gli edge al di fuori della box, poi interpolare tutti i punti verdi con una funzione, e mi dovrebbe dare all'incirca una curva dei binari, così posso aggiungere punti più avanti
+            #Faccio la media dei tre centri calcolati sopra
+            #average_midde_point = media_robusta([gdbox_midde_point, edges_rails_midde_point, image_midde_point])
+            average_midde_point = int((gdbox_midde_point + image_midde_point + edges_rails_midde_point) / 3)
+        else:
+            #average_midde_point = media_robusta([gdbox_midde_point, image_midde_point])
+            print(gdbox_midde_point, image_midde_point)
+            average_midde_point = int((gdbox_midde_point + image_midde_point) / 2)
 
         points = []
         points.append([average_midde_point, height-10])
-        #points.append([average_midde_point-50,height-10])
-        #points.append([average_midde_point+50,height-10])
-        points.append([average_midde_point, height-40])
-        #points.append([average_midde_point-50, height-20])
-        #points.append([average_midde_point+50, height-20])
-        points.append([average_midde_point, height - 100])
-        points.append([average_midde_point, height - 140])
-        points.append([average_midde_point, height - 180])
+        points.append([average_midde_point, height-50])
+        points.append([average_midde_point-20, height - 50])
+        points.append([average_midde_point+20, height - 50])
+        points.append([average_midde_point, height - 90])
+        points.append([average_midde_point, height - 130])
+        points.append([average_midde_point+20, height - 130])
+        points.append([average_midde_point-20, height - 130])
+        points.append([average_midde_point, height - 170])
     else:
         x_mask_points = np.array([])
         y_mask_points = np.array([])
@@ -726,7 +743,7 @@ def main():
     #video_predictor = build_sam2_video_predictor(sam2_cfg_path, sam2_checkpoint, device=device)
 
     #FIXME da scrivere meglio
-    video_predictor_rails = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_s.yaml", "models/sam2.1/sam2.1_hiera_small.pt", device=device)
+    video_predictor_rails = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_t.yaml", "models/sam2.1/sam2.1_hiera_tiny.pt", device=device)
 
     # Load the GroundingDINO model
     groundingdino_checkpoint = config['groundingdino_checkpoint']
@@ -736,7 +753,7 @@ def main():
     BOX_TRESHOLD = args.box_threshold
     TEXT_TRESHOLD = args.text_threshold
     #FIXME da scrivere meglio
-    BACKGROUND_PROMPT = "one train tracks."
+    BACKGROUND_PROMPT = "one train track."
     OBSTACLE_PROMPT = "all things ."
     BOX_TRESHOLD_RAILS = 0.25
     TEXT_TRESHOLD_RAILS = 0.15
@@ -864,11 +881,25 @@ def main():
 
                 # Find main railway box and object points
                 max_score_railway = 0
+                main_box_area = 0
+                #FIXME come faccio a fare che prenda solo il binario centrale, perchè alcune volte prende tutti i binari
+                #for i,box in enumerate(dino_boxes):
+                #    if dino_scores[i] > max_score_railway:
+                #        main_railway_box = box
+                #        max_score_railway = dino_scores[i]
 
                 for i,box in enumerate(dino_boxes):
-                    if dino_scores[i] > max_score_railway:
+                    if main_railway_box is None:
                         main_railway_box = box
-                        max_score_railway = dino_scores[i]
+                    else:
+                        gd_width = box[2] - box[0]
+                        gd_height = box[3] - box[1]
+                        actual_box_area = gd_width * gd_height
+                        main_width = main_railway_box[2] - main_railway_box[0]
+                        main_height = main_railway_box[3] - main_railway_box[1]
+                        main_box_area = main_width * main_height
+                        if actual_box_area < main_box_area:
+                            main_railway_box = box
 
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
                     frame_path, groundingdino, OBSTACLE_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
@@ -888,7 +919,7 @@ def main():
                     #points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
                     points, labels = extract_main_internal_railway_points_and_labels(frame_rgb, main_railway_box,last_masks_rails)
 
-                    _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
+                    _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(      #TODO la maschera generata andrebbe espandsa dai lati per includere i binari e contorni, magari anche blurrarla
                         inference_state=inference_state_rails,
                         frame_idx=0,
                         obj_id=ann_rail_id,
@@ -1136,6 +1167,7 @@ def main():
             plt.imshow(frame_rgb)
             for obj_id, mask in last_masks_rails.items():
                 utility.show_mask_v(mask, plt.gca(), obj_id=obj_id)
+                break
             if args.show_frames:  # show the plt image using OpenCV
                 cv2.imshow("Processed video frame", utility.plt_figure_to_cv2( plt.gcf()))
                 key = cv2.waitKey(1)

@@ -377,8 +377,6 @@ def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
     br_point = bottom_points[index_br]
     bl_point = bottom_points[index_bl]
 
-    print(bl_point, br_point, tl_point, tr_point)
-
     #Perspective trensformation
     starting_points = np.array([
         tl_point,
@@ -627,7 +625,6 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
             average_midde_point = int((gdbox_midde_point + image_midde_point + edges_rails_midde_point) / 3)
         else:
             #average_midde_point = media_robusta([gdbox_midde_point, image_midde_point])
-            print(gdbox_midde_point, image_midde_point)
             average_midde_point = int((gdbox_midde_point + image_midde_point) / 2)
 
         points = []
@@ -640,6 +637,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
         points.append([average_midde_point+20, height - 130])
         points.append([average_midde_point-20, height - 130])
         points.append([average_midde_point, height - 170])
+        labels = np.ones(len(points))
     else:
         x_mask_points = np.array([])
         y_mask_points = np.array([])
@@ -700,13 +698,19 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
         savol_array_left = savol_array.copy()
         savol_array_right = savol_array.copy()
         savol_array_expanded = []
-        for i in range(len(savol_array)):
+        savol_array_expanded_negative = []
+        for i in range(len(savol_array)):        #TODO per migliorare i point prompt, potrei mettere dei punti a label negativa a destra e sinistra
             if i>0 and i<len(savol_array_left)-1 and (i%6) == 0:
                 #savol_array_expanded.append(savol_array[i])
                 current_y_in_rail_box = savol_array[i][1] - y
                 savol_array_expanded.append([savol_array[i][0]-int(current_y_in_rail_box*0.12), savol_array[i][1]])
                 savol_array_expanded.append([savol_array[i][0]+int(current_y_in_rail_box*0.12), savol_array[i][1]])
-        points = np.array(savol_array_expanded)
+                savol_array_expanded_negative.append([savol_array[i][0] - int(current_y_in_rail_box * 0.90), savol_array[i][1]])
+                savol_array_expanded_negative.append([savol_array[i][0] + int(current_y_in_rail_box * 0.90), savol_array[i][1]])
+        points = np.array(np.concatenate((savol_array_expanded, savol_array_expanded_negative)))
+        labels = np.ones(len(savol_array_expanded))
+        neg_labels = np.zeros(len(savol_array_expanded_negative))
+        labels = np.concatenate((labels, neg_labels))
 
     #Diplaying points
     #IMAGE_COPY = image_source.copy()
@@ -717,8 +721,52 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
     #cv2.waitKey(0)
 
-    labels = np.ones(len(points))
     return points, labels
+
+def refine_mask(mask):
+    # Rimuovo i buchi dalla maschera e la rendo più precisa e geometrica
+    cmap = plt.get_cmap("tab10")
+    cmap_idx = 1
+    color = np.array([*cmap(cmap_idx + 1)[:3], 0.6])
+    h, w = mask.shape[-2:]
+    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1,-1)
+    '''
+    h, w = mask_image.shape[:2]  # your target image size
+    white_image = np.zeros((h, w), dtype=np.uint8)  # grayscale image (1 channel)
+
+    # Assume white_image has shape (H, W)
+    h, w = white_image.shape[:2]
+
+    # Convert your mask to uint8 and pad it properly
+    mask = mask.astype('uint8')
+
+    # FloodFill requires the mask to be (H+2, W+2)
+    padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
+    padded_mask[1:h + 1,
+    1:w + 1] = mask  # optional: copy into the center, or leave zeros
+    cv2.floodFill(white_image, padded_mask, (0, 0), 255)
+    white_image = cv2.bitwise_not(white_image)
+    #white_image = cv2.GaussianBlur(white_image, (101, 101), 0)
+    a = np.array(white_image)
+
+    '''
+    mask = mask.astype(np.uint8)
+    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    # find maximum contour and draw
+    cmax = max(contours, key=cv2.contourArea)
+    epsilon = 0.002 * cv2.arcLength(cmax, True)
+    approx = cv2.approxPolyDP(cmax, epsilon, True)
+    cv2.drawContours(mask_image, [approx], -1, (0, 255, 0), 3)
+
+    width, height = mask.shape[:2]
+
+    # fill maximum contour and draw
+    img = np.zeros([width, height, 3], dtype=np.uint8)
+    cv2.fillPoly(img, pts=[cmax], color=(255, 255, 255))
+
+    a = np.array(img)
+    return a
 
 # main
 def main():
@@ -877,7 +925,9 @@ def main():
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
                     frame_path, groundingdino, BACKGROUND_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
                     TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
-                )#TODO Rimuovere lo show=true
+                )#TODO Rimuovere lo show=True
+
+                #TODO tra le bounding box togliere quelle che sono troppo grosse
 
                 # Find main railway box and object points
                 max_score_railway = 0
@@ -888,6 +938,24 @@ def main():
                 #        main_railway_box = box
                 #        max_score_railway = dino_scores[i]
 
+                max_score_railway = 0
+                for i,box in enumerate(dino_boxes):
+                    if main_railway_box is None:
+                        main_railway_box = box
+                        max_score_railway = dino_scores[i]
+                    else:
+                        dino_box_width = box[2] - box[0]
+                        dino_box_center = (box[0] + box[2]) // 2
+                        image_center = width // 2
+                        dino_abs_distance_from_center = abs(dino_box_center - image_center)
+                        if dino_box_width >= int(0.75*width):       #FIXME controllare se il 75% va bene
+                            if dino_abs_distance_from_center < int(0.25*width):     #FIXME controlare se il 25% va bene
+                                if dino_scores[i] > max_score_railway:
+                                    main_railway_box = box
+                                    max_score_railway = dino_scores[i]
+
+                '''        
+                #Picking the smallest Dino box
                 for i,box in enumerate(dino_boxes):
                     if main_railway_box is None:
                         main_railway_box = box
@@ -900,6 +968,7 @@ def main():
                         main_box_area = main_width * main_height
                         if actual_box_area < main_box_area:
                             main_railway_box = box
+                '''
 
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
                     frame_path, groundingdino, OBSTACLE_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
@@ -929,7 +998,9 @@ def main():
                     )
 
                     # Store railway mask
-                    last_masks_rails[ann_rail_id] = (out_mask_logits[0] > 0).cpu().numpy()
+                    print(ann_rail_id,"annotation rail id")
+                    last_masks_rails[ann_rail_id] = refine_mask((out_mask_logits[0] > 0).cpu().numpy())
+                    print("-1-")
 
                 # Add detected objects to tracking
                 for obj_point in all_obstacles_points:
@@ -1049,9 +1120,12 @@ def main():
             # Update all masks for next frame
             for i, obj_id in enumerate(out_obj_ids):
                 last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
+                if obj_id == 1: #Fixme mettere se è la maschera binario
+                    last_masks_rails[obj_id] = refine_mask((out_mask_logits[i] > 0).cpu().numpy())  #FIXME non fa refine al binario ma solo a tutto il resto
+                    print("-2-")
 
             # Check for new objects periodically
-            if (frame_idx % 15 == 0 and frame_idx > 0) or (frame_idx > 0 and frame_idx < 3):
+            if (frame_idx % 15 == 0 and frame_idx > 0):
                 '''
                 dino_boxes, phrases, _ = utility.grounding_Dino_analyzer(
                     frame_path, groundingdino, 'object .', device, BOX_TRESHOLD=BOX_TRESHOLD,
@@ -1105,6 +1179,28 @@ def main():
                             for i, obj_id in enumerate(out_obj_ids):
                                 last_masks[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
                 '''
+                # DETECTION OF THE MAIN RAILWAY AND THE OBSTACLES
+                dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
+                    frame_path, groundingdino, BACKGROUND_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
+                    TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
+                )  # TODO Rimuovere lo show=true
+                # TODO tra le bounding box togliere quelle che sono troppo grosse
+                # Find main railway box and object points
+                # FIXME come faccio a fare che prenda solo il binario centrale, perchè alcune volte prende tutti i binari
+
+                for i, box in enumerate(dino_boxes):
+                    if main_railway_box is None:
+                        main_railway_box = box
+                    else:
+                        gd_width = box[2] - box[0]
+                        gd_height = box[3] - box[1]
+                        actual_box_area = gd_width * gd_height
+                        main_width = main_railway_box[2] - main_railway_box[0]
+                        main_height = main_railway_box[3] - main_railway_box[1]
+                        main_box_area = main_width * main_height
+                        if actual_box_area < main_box_area:
+                            main_railway_box = box
+
                 #FIXME da scrivere meglio
                 dino_boxes, phrases, _ = utility.grounding_Dino_analyzer(
                     frame_path, groundingdino, OBSTACLE_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
@@ -1161,6 +1257,9 @@ def main():
                             # Update masks dictionary
                             for i, obj_id in enumerate(out_obj_ids):
                                 last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
+                                if obj_id == 1: #FIXME da sostituire true con la ricerca del binario
+                                    last_masks_rails[obj_id] = refine_mask((out_mask_logits[i] > 0).cpu().numpy())
+                                    print("-3-")
 
             # Create visualization
             plt.figure(figsize=(8, 6))
@@ -1173,7 +1272,7 @@ def main():
                 key = cv2.waitKey(1)
                 if key == ord('q'):
                     raise KeyboardInterrupt
-            if True:  #to remove True in args.save_frames
+            if args.save_frames:  #to remove True in args.save_frames
                 plt.savefig(os.path.join(args.output_path, f"frame_{frame_idx:06d}.jpg"))
             plt.close()
 

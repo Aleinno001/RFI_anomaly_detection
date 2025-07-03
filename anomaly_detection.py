@@ -723,14 +723,21 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
 
     return points, labels
 
-def refine_mask(mask):
+def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera precedente
+    #FIXME operazione and tra le maschere
+    if previous_mask is not None and False:     #TODO togliere false e forse toglierlo prorpio
+        print("mascheraccia",previous_mask)
+        previous_mask_bool = (np.array(previous_mask) != 0)
+        print("mascheraccia bool", previous_mask_bool)
+        print(mask)
+        mask = np.ma.mask_or(mask, previous_mask_bool)
     # Rimuovo i buchi dalla maschera e la rendo più precisa e geometrica
     cmap = plt.get_cmap("tab10")
     cmap_idx = 1
     color = np.array([*cmap(cmap_idx + 1)[:3], 0.6])
     h, w = mask.shape[-2:]
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1,-1)
-    '''
+
     h, w = mask_image.shape[:2]  # your target image size
     white_image = np.zeros((h, w), dtype=np.uint8)  # grayscale image (1 channel)
 
@@ -747,26 +754,125 @@ def refine_mask(mask):
     cv2.floodFill(white_image, padded_mask, (0, 0), 255)
     white_image = cv2.bitwise_not(white_image)
     #white_image = cv2.GaussianBlur(white_image, (101, 101), 0)
-    a = np.array(white_image)
 
+    # convert to grayscale
+    #gray = cv2.cvtColor(white_image, cv2.COLOR_BGR2GRAY)
+    gray = white_image
+
+    # blur
+    blur = cv2.GaussianBlur(gray, (0, 0), sigmaX=3, sigmaY=3)
+
+    # divide
+    #divide = cv2.divide(gray, blur, scale=255)
+
+    # otsu threshold
+    thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+
+    # apply morphology
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+    # display it
+    #cv2.imshow("gray", gray)
+    #cv2.imshow("divide", divide)
+    #cv2.imshow("thresh", thresh)
+    #cv2.imshow("morph", morph)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
+
+    white_image = np.zeros((h, w), dtype=np.uint8)  # grayscale image (1 channel)
+    padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
+    padded_mask[1:h + 1,
+    1:w + 1] = morph  # optional: copy into the center, or leave zeros
+    cv2.floodFill(white_image, padded_mask, (0, 0), 255)
+    white_image = cv2.bitwise_not(white_image)
     '''
-    mask = mask.astype(np.uint8)
-    contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    #TODO adesso rendere la maschera un "poligono" smussato
+    curve_left_rail = []
+    curve_right_rail = []
+    x_curve_left_rail = []
+    x_curve_right_rail = []
+    found_l = False
+    found_r = False
+    for j in range(h-1,0,-2):
+        i=0
+        while found_l == False or found_r == False:        #FIXME possibile loop infinito
+            if white_image[j][i] == 255:
+                if found_l:
+                    curve_right_rail.append([i, j])
+                    x_curve_right_rail.append(i)
+                    found_r = True
+                else:
+                    curve_left_rail.append([i, j])
+                    x_curve_left_rail.append(i)
+                    found_l = True
+                    i=w
+            if found_l:
+                i-=1
+            else:
+                i+=1
+            if i == w:
+                break
+            if i == -1:
+                break
+        found_l = False
+        found_r = False
 
-    # find maximum contour and draw
-    cmax = max(contours, key=cv2.contourArea)
-    epsilon = 0.002 * cv2.arcLength(cmax, True)
-    approx = cv2.approxPolyDP(cmax, epsilon, True)
-    cv2.drawContours(mask_image, [approx], -1, (0, 255, 0), 3)
+    xhat_right = savgol_filter(x_curve_right_rail, 5, 3)
+    xhat_left = savgol_filter(x_curve_left_rail, 5, 3)
 
-    width, height = mask.shape[:2]
+    savol_array = []
+    x_avg_array_filtered_left = np.array(xhat_left)
+    x_avg_array_filtered_right = np.array(xhat_right)
+    for i in range(len(x_curve_left_rail)):
+        savol_array.append([x_avg_array_filtered_left[i], curve_left_rail[i][1]])
+    for i in range(len(x_curve_right_rail)-1,0,-1):
+        savol_array.append([x_avg_array_filtered_right[i], curve_right_rail[i][1]])
 
-    # fill maximum contour and draw
-    img = np.zeros([width, height, 3], dtype=np.uint8)
-    cv2.fillPoly(img, pts=[cmax], color=(255, 255, 255))
+    curve = np.array(savol_array, dtype=np.float32)
+    curve = np.round(curve).astype(np.int32)
 
-    a = np.array(img)
+    # Reshape for cv2.polylines: (N, 1, 2)
+    curve = curve.reshape((-1, 1, 2))
+
+    white_image = np.zeros_like(white_image)
+    # Draw the curve
+    cv2.polylines(white_image, [curve], isClosed=True, color=(255, 255, 255), thickness=4)
+
+    # Show image after savol filter
+    #cv2.imshow("Image with savol_array", white_image)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
+
+    # Diplaying points
+    #print(f"curve_left_rail: {curve_left_rail}")
+    #print(f"curve_right_rail: {curve_right_rail}")
+    #points = np.concatenate((curve_left_rail, curve_right_rail))
+    #IMAGE_COPY = np.zeros_like(mask_image)
+    #i = 0
+    #for p in points:
+    #   cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (0, 255, 0), thickness=1)
+    #   i = i + 1
+    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
+    #cv2.waitKey(0)
+
+    #TODO aggiungere il colore e la trasparenza
+    padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
+    padded_mask[1:h + 1,
+    1:w + 1] = white_image  # optional: copy into the center, or leave zeros
+    cv2.floodFill(white_image, padded_mask, (w//2,h-20), (255,255,255))     #FXIME il punto di flood va messo dentro il cerchio dei binari
+    #white_image = cv2.bitwise_not(white_image)
+    #TODO da aggiungere il passaggio della vecchia maschera cosi si può fare una media delle maschere
+
+    #FIXME non è stabile la maschra, soprattutto in anomaly detection il video di san donato
+    '''
+
+    #alpha = np.full(white_image.shape, 128, dtype=np.uint8)
+    #white_image = np.dstack((white_image, alpha))
+    a = white_image.astype(bool)
+    #a = np.array(white_image)
     return a
+    #return mask
 
 # main
 def main():
@@ -1000,7 +1106,6 @@ def main():
                     # Store railway mask
                     print(ann_rail_id,"annotation rail id")
                     last_masks_rails[ann_rail_id] = refine_mask((out_mask_logits[0] > 0).cpu().numpy())
-                    print("-1-")
 
                 # Add detected objects to tracking
                 for obj_point in all_obstacles_points:
@@ -1119,10 +1224,10 @@ def main():
 
             # Update all masks for next frame
             for i, obj_id in enumerate(out_obj_ids):
-                last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
                 if obj_id == 1: #Fixme mettere se è la maschera binario
-                    last_masks_rails[obj_id] = refine_mask((out_mask_logits[i] > 0).cpu().numpy())  #FIXME non fa refine al binario ma solo a tutto il resto
-                    print("-2-")
+                    last_masks_rails[obj_id] = refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])  #FIXME non fa refine al binario ma solo a tutto il resto
+                else:
+                    last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 
             # Check for new objects periodically
             if (frame_idx % 15 == 0 and frame_idx > 0):
@@ -1256,10 +1361,10 @@ def main():
 
                             # Update masks dictionary
                             for i, obj_id in enumerate(out_obj_ids):
-                                last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
                                 if obj_id == 1: #FIXME da sostituire true con la ricerca del binario
-                                    last_masks_rails[obj_id] = refine_mask((out_mask_logits[i] > 0).cpu().numpy())
-                                    print("-3-")
+                                    last_masks_rails[obj_id] = refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])
+                                else:
+                                    last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 
             # Create visualization
             plt.figure(figsize=(8, 6))

@@ -867,10 +867,90 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
     #FIXME non è stabile la maschra, soprattutto in anomaly detection il video di san donato
     '''
 
-    #alpha = np.full(white_image.shape, 128, dtype=np.uint8)
-    #white_image = np.dstack((white_image, alpha))
+    #--perspective rectifing--------------------------
+    '''
+    tl_point = []
+    tr_point = []
+    bl_point = []
+    br_point = []
+    found_t=False
+    found_b=False
+    top_mask_found=False
+    bottom_mask_found=False
+    j=0
+
+    for j in range(h//2,h-1,1):
+        for i in range(w):
+            if white_image[j][i] == 255:
+                tl_point = [i, j]
+                break
+        if len(tl_point) > 0:
+            break
+    for j in range(h//2,h-1,1):
+        for i in range(w-1,0,-1):
+            if white_image[j][i] == 255:
+                tr_point = [i, j]
+                break
+        if len(tr_point) > 0:
+            break
+    for j in range(h-1,0,-1):
+        for i in range(w):
+            if white_image[j][i] == 255:
+                bl_point = [i, j]
+                break
+        if len(bl_point) > 0:
+            break
+    for j in range(h-1,0,-1):
+        for i in range(w-1,0,-1):
+            if white_image[j][i] == 255:
+                br_point = [i,j]
+                break
+        if len(br_point) > 0:
+            break
+
+
+
+    four_perspective_box_points = np.array([tl_point, tr_point, br_point, bl_point],dtype=np.float32)
+
+    # Diplaying points
+    IMAGE_COPY = white_image.copy()
+    i = 0
+    for p in four_perspective_box_points:
+       cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (255, 255, 255), thickness=10)
+       i = i + 1
+    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
+    cv2.waitKey(0)
+
+    widthA = np.linalg.norm(br_point[0] - bl_point[0])
+    widthB = np.linalg.norm(tr_point[0] - tl_point[0])
+    maxWidth = int(max(widthA, widthB))
+
+    heightA = np.linalg.norm(tr_point[1] - br_point[1])
+    heightB = np.linalg.norm(tl_point[1] - bl_point[1])
+    maxHeight = int(max(heightA, heightB))
+
+    dst_pts = np.array([
+        [0, 0],
+        [maxWidth - 1, 0],
+        [maxWidth - 1, maxHeight - 1],
+        [0, maxHeight - 1]
+    ], dtype="float32")
+
+    # Step 7: Get the perspective transform matrix
+    M = cv2.getPerspectiveTransform(four_perspective_box_points, dst_pts)
+
+    # Step 8: Warp the image
+    warped = cv2.warpPerspective(white_image, M, (maxWidth, maxHeight))
+
+    # Show or save result
+    cv2.imshow("Warped", warped)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    '''
+    #----------------checking old mask------------
+    #TODO fare una "media" delle due maschere
+
     a = white_image.astype(bool)
-    #a = np.array(white_image)
     return a
     #return mask
 
@@ -1104,7 +1184,6 @@ def main():
                     )
 
                     # Store railway mask
-                    print(ann_rail_id,"annotation rail id")
                     last_masks_rails[ann_rail_id] = refine_mask((out_mask_logits[0] > 0).cpu().numpy())
 
                 # Add detected objects to tracking
@@ -1361,7 +1440,7 @@ def main():
 
                             # Update masks dictionary
                             for i, obj_id in enumerate(out_obj_ids):
-                                if obj_id == 1: #FIXME da sostituire true con la ricerca del binario
+                                if obj_id == 1:
                                     last_masks_rails[obj_id] = refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])
                                 else:
                                     last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()

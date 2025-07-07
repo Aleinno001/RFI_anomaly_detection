@@ -725,12 +725,6 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
 
 def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera precedente
     #FIXME operazione and tra le maschere
-    if previous_mask is not None and False:     #TODO togliere false e forse toglierlo prorpio
-        print("mascheraccia",previous_mask)
-        previous_mask_bool = (np.array(previous_mask) != 0)
-        print("mascheraccia bool", previous_mask_bool)
-        print(mask)
-        mask = np.ma.mask_or(mask, previous_mask_bool)
     # Rimuovo i buchi dalla maschera e la rendo più precisa e geometrica
     cmap = plt.get_cmap("tab10")
     cmap_idx = 1
@@ -949,6 +943,34 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
     '''
     #----------------checking old mask------------
     #TODO fare una "media" delle due maschere
+
+    #TODO potrei blurrarle e sovrapporle e trovare i valori vicini a 255
+    # blur
+    if previous_mask is not None:
+        previous_mask_image = previous_mask.astype('uint8')
+
+        '''
+        previous_blur=cv2.GaussianBlur(previous_mask_image, (0, 0), sigmaX=7, sigmaY=7)
+        # otsu threshold
+        previous_thresh = cv2.threshold(previous_blur, 0, 127, cv2.THRESH_BINARY)[1]
+
+        blur = cv2.GaussianBlur(white_image, (0, 0), sigmaX=7, sigmaY=7)
+        # otsu threshold
+        thresh = cv2.threshold(blur, 0, 127, cv2.THRESH_BINARY)[1]
+
+        result = cv2.addWeighted(previous_thresh, 1, thresh, 1, 0)
+        # setting alpha=1, beta=1, gamma=0 gives direct overlay of two images
+
+        result = cv2.threshold(result, 128, 255, cv2.THRESH_BINARY)[1]
+        white_image = result
+        '''
+
+        inter = cv2.bitwise_and(white_image, previous_mask_image)
+        union = cv2.bitwise_or(white_image, previous_mask_image)
+        stable_mask = cv2.addWeighted(inter, 0.7, union, 0.3, 0)
+        stable_mask = cv2.threshold(stable_mask, 0, 255, cv2.THRESH_BINARY)[1]
+        white_image = stable_mask
+
 
     a = white_image.astype(bool)
     return a

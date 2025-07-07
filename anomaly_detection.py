@@ -1,7 +1,7 @@
 import numpy
 from PIL.ImageChops import offset
 from groundingdino.util.inference import load_model, load_image
-from scipy.interpolate import interp1d, make_interp_spline, splprep, splev
+from scipy.interpolate import interp1d, make_interp_spline, splprep, splev, UnivariateSpline
 import os
 import torch
 from PIL import Image
@@ -967,9 +967,64 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
 
         inter = cv2.bitwise_and(white_image, previous_mask_image)
         union = cv2.bitwise_or(white_image, previous_mask_image)
-        stable_mask = cv2.addWeighted(inter, 0.7, union, 0.3, 0)
+        stable_mask = cv2.addWeighted(inter, 0.55, union, 0.45, 0)      #FIXME se favorisco la union è ,meglio ma si trascina dietro gli eccessi, con la intersect è più stretto
         stable_mask = cv2.threshold(stable_mask, 0, 255, cv2.THRESH_BINARY)[1]
         white_image = stable_mask
+
+    #TODO idea, posso fare un rettangolo in prospettiva e poi adattarlo ai punti della curva e avere il binario, percè io so per certo che la maschera deve finire alla base dell'immagine, e i contorni devono essere lineari
+
+    #TODO rimuovere le isole nella maschera (forse non ce ne è bisogno grazie all'intersezione)
+    #TODO ritaglare fuori gli eccessi (con intersezione non è del tutto essenziale)
+
+    contours, _ = cv2.findContours(white_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        print("Nessun contorno trovato.")
+        exit()
+
+    main_contour = max(contours, key=cv2.contourArea)
+    main_contour = main_contour[:, 0, :]  # Remove nesting
+
+    # Ordina per y (dall'alto verso il basso)
+    #main_contour = main_contour[np.argsort(main_contour[:, 1])]
+
+    # Spezza il contorno a metà
+    #half = len(main_contour) // 2
+    #left_side = main_contour[:half]
+    #right_side = main_contour[half:][::-1]  # inverti per mantenere ordine top→bottom
+
+    white = np.zeros_like(white_image)
+    #cv2.drawContours(white, [main_contour], -1, (255,255,255), thickness=2)
+    cv2.drawContours(white, [main_contour], -1, (255, 255, 255), 3)
+    cv2.fillPoly(white, pts=[main_contour], color=(255, 255, 255))
+    cv2.imshow("White", white)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # Funzione di smoothing
+    def smooth_curve(points, smooth_factor=5):
+        points = points[np.argsort(points[:, 1])]  # Ordina per y crescente
+        ys = points[:, 1]
+        xs = points[:, 0]
+        spline = UnivariateSpline(ys, xs, s=smooth_factor)
+        ys_dense = np.linspace(ys.min(), ys.max(), white_image.shape[0]).astype(np.int32)
+        xs_smooth = spline(ys_dense).astype(np.int32)
+        return np.stack([xs_smooth, ys_dense], axis=1)
+
+    left_smooth = smooth_curve(left_side)
+    right_smooth = smooth_curve(right_side)
+
+    # Crea nuova maschera
+    new_mask = np.zeros_like(white_image)
+
+    for (x_left, y), (x_right, _) in zip(left_smooth, right_smooth):
+        if 0 <= x_left < white_image.shape[1] and 0 <= x_right < white_image.shape[1] and x_left < x_right:
+            cv2.line(new_mask, (x_left, y), (x_right, y), 255, 1)
+
+    # Mostra la nuova maschera
+    cv2.imshow("new_mask", new_mask)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
 
 
     a = white_image.astype(bool)

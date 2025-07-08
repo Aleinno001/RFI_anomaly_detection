@@ -950,7 +950,9 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
     # blur
 
     if previous_mask is not None:
-        previous_mask_image = previous_mask.astype('uint8')
+        #previous_mask_image = previous_mask.astype('uint8')
+        previous_mask_image = previous_mask*255
+        previous_mask_image = previous_mask_image.astype(white_image.dtype)
         '''
         previous_blur=cv2.GaussianBlur(previous_mask_image, (0, 0), sigmaX=7, sigmaY=7)
         # otsu threshold
@@ -969,9 +971,9 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
 
         inter = cv2.bitwise_and(white_image, previous_mask_image)
         union = cv2.bitwise_or(white_image, previous_mask_image)
-        stable_mask = cv2.addWeighted(inter, 0.65, union, 0.35, 0)      #FIXME se favorisco la union è ,meglio ma si trascina dietro gli eccessi, con la intersect è più stretto
+        stable_mask = cv2.addWeighted(inter, 0.90, union, 0.10, 0)      #FIXME se favorisco la union è ,meglio ma si trascina dietro gli eccessi, con la intersect è più stretto
         stable_mask = cv2.threshold(stable_mask, 0, 255, cv2.THRESH_BINARY)[1]
-        white_image = stable_mask
+        #white_image = stable_mask
 
 
     #TODO idea, posso fare un rettangolo in prospettiva e poi adattarlo ai punti della curva e avere il binario, percè io so per certo che la maschera deve finire alla base dell'immagine, e i contorni devono essere lineari
@@ -999,15 +1001,12 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
     #cv2.drawContours(white, [main_contour], -1, (255,255,255), thickness=2)
     cv2.drawContours(white, [main_contour], -1, (255, 255, 255), 3)
     cv2.fillPoly(white, pts=[main_contour], color=(255, 255, 255))          #Fully removed islands an not connected pieces of the mask
-    cv2.imshow("White", white)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
     lrail_p_x = []
     lrail_p_y = []
     rrail_p_x = []
     rrail_p_y = []
-    for j in range(h-1,0,-15):
+    for j in range(h-1,0,-3):
         i=0
         left_x_temp_points = []
         right_x_temp_points = []
@@ -1032,14 +1031,14 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
     i = 0
     right_rail_points = np.stack((rrail_p_x, rrail_p_y), axis=1)
     left_rail_points = np.stack((lrail_p_x, lrail_p_y), axis=1)
-    points = np.array(left_rail_points)
-    points = np.concatenate((points, np.array(right_rail_points)))
-    for p in right_rail_points:
-      cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (255, 255, 255), thickness=4)
-      i = i + 1
-    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    #points = np.array(left_rail_points)
+    #points = np.concatenate((points, np.array(right_rail_points)))
+    #for p in right_rail_points:
+    #  cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (255, 255, 255), thickness=4)
+    #  i = i + 1
+    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
 
     #FIXME da mettere in un metodo
     lrail_p_x = np.array(lrail_p_x)
@@ -1054,14 +1053,14 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
 
     xy_array = np.column_stack((x_fit, y_smooth))
 
-    IMAGE_COPY = np.zeros_like(white)
-    i = 0
-    for p in xy_array:
-        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (255, 255, 255), thickness=2)
-        i = i + 1
-    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    #IMAGE_COPY = np.zeros_like(white)
+    #i = 0
+    #for p in xy_array:
+    #    cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (255, 255, 255), thickness=2)
+    #    i = i + 1
+    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
 
     rrail_p_x = np.array(rrail_p_x)
     rrail_p_y = np.array(rrail_p_y)
@@ -1075,14 +1074,14 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
 
     xy_array2 = np.column_stack((x_fit2, y_smooth2))
 
-    IMAGE_COPY = np.zeros_like(white)
-    i = 0
-    for p in xy_array2:
-        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (255, 255, 255), thickness=2)
-        i = i + 1
-    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    #IMAGE_COPY = np.zeros_like(white)
+    #i = 0
+    #for p in xy_array2:
+    #    cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (255, 255, 255), thickness=2)
+    #    i = i + 1
+    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
+    #cv2.waitKey(0)
+    #cv2.destroyAllWindows()
 
     xy_array2 = xy_array2[::-1]
     poly_points = np.array(xy_array,dtype=np.int32)
@@ -1090,13 +1089,73 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
     poly_points = poly_points.reshape((-1, 1, 2))
     IMAGE_COPY = np.zeros_like(white)
     cv2.polylines(IMAGE_COPY, [poly_points], isClosed=True, color=(255, 255, 255), thickness=2)
-    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
     #TODO fill poly e passarlo in return e veere che succede
+    cv2.fillPoly(IMAGE_COPY, pts=[poly_points], color=(255, 255, 255))
 
-    a = white.astype(bool)
+    #TODO check se la nuova maschera differisce troppo dalla precedente, scartala e usa la vechchoa
+    #FIXME da mettere in un metodo
+    #Idea intersezione, sottraazione e conto i pixel bianchi, poi faccio la percentuale
+    if previous_mask is not None:
+        intersection = cv2.bitwise_and(IMAGE_COPY, previous_mask_image)
+        result = cv2.bitwise_xor(intersection, IMAGE_COPY)
+        #cv2.imshow("Original", IMAGE_COPY)
+        #cv2.imshow("Old", previous_mask_image)
+        #cv2.imshow("Intersection", intersection)
+        #cv2.imshow("Result", result)
+        #cv2.waitKey(0)
+        #cv2.destroyAllWindows()
+
+        #Contare i binchi
+        white_px = 0
+        for j in range(h):
+            for i in range(w):
+                if result[j][i] == 255:
+                    white_px+=1
+        tot_px = h*w
+        difference_percentage = white_px/tot_px
+        print(f"difference_percentage: {difference_percentage}")
+        #if difference_percentage>0.03:
+            #IMAGE_COPY = previous_mask_image.copy()    #FIXME se cè cambio binari non funziona, da fare sta cosa solo se al di fuori della forma dei binari
+        #TODO calcolare la larghezza della maschera dei binari e se diminuisce vicino alla base dell'immagine, allora copio incollo il pezzo vecchio della maschera fino a dove avviene l'anomalia
+        critical_height = None
+        old_temp_width = 0
+        temp_width = 0
+        temp_left_point = []
+        temp_right_point = []
+        for j in range(0,h,5):
+            temp_left_point = 0
+            temp_right_point = 0
+            for i in range(w):
+                if result[j][i] == 255:
+                    temp_left_point=i
+                    while i<w and result[j][i]==255:
+                        i+=1
+                    temp_right_point=i-1
+                    temp_width=temp_right_point-temp_left_point
+                    break
+            print(f"temp_width: {temp_width}")
+            print(f"old_temp_width: {old_temp_width}")
+            if temp_width>=(old_temp_width*1.02):       #FIXME non funziona scatta subito
+                old_temp_width = temp_width
+            else:
+                critical_height = j
+                break
+
+        print("Criticall",critical_height,"---------------------------------------")
+        if critical_height!=None:
+            old_copy = previous_mask_image.copy()
+            #TODO tagliare la vecchia immagine dalla latezza in giu e incollarla sulla nuova immagine
+            for j in range(critical_height):
+                for i in range(w):
+                    old_copy[j][i] = 0
+            cv2.imshow("Old", old_copy)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+            fixed_image = cv2.bitwise_or(IMAGE_COPY, old_copy)
+            IMAGE_COPY = fixed_image
+    #a = white.astype(bool)
+    a = IMAGE_COPY.astype(bool)
     return a
     #return mask
 

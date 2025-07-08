@@ -1,4 +1,6 @@
 import numpy
+import pandas as pd
+import seaborn as sns
 from PIL.ImageChops import offset
 from groundingdino.util.inference import load_model, load_image
 from scipy.interpolate import interp1d, make_interp_spline, splprep, splev, UnivariateSpline
@@ -946,9 +948,9 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
 
     #TODO potrei blurrarle e sovrapporle e trovare i valori vicini a 255
     # blur
+
     if previous_mask is not None:
         previous_mask_image = previous_mask.astype('uint8')
-
         '''
         previous_blur=cv2.GaussianBlur(previous_mask_image, (0, 0), sigmaX=7, sigmaY=7)
         # otsu threshold
@@ -967,9 +969,10 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
 
         inter = cv2.bitwise_and(white_image, previous_mask_image)
         union = cv2.bitwise_or(white_image, previous_mask_image)
-        stable_mask = cv2.addWeighted(inter, 0.55, union, 0.45, 0)      #FIXME se favorisco la union è ,meglio ma si trascina dietro gli eccessi, con la intersect è più stretto
+        stable_mask = cv2.addWeighted(inter, 0.65, union, 0.35, 0)      #FIXME se favorisco la union è ,meglio ma si trascina dietro gli eccessi, con la intersect è più stretto
         stable_mask = cv2.threshold(stable_mask, 0, 255, cv2.THRESH_BINARY)[1]
         white_image = stable_mask
+
 
     #TODO idea, posso fare un rettangolo in prospettiva e poi adattarlo ai punti della curva e avere il binario, percè io so per certo che la maschera deve finire alla base dell'immagine, e i contorni devono essere lineari
 
@@ -995,39 +998,105 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
     white = np.zeros_like(white_image)
     #cv2.drawContours(white, [main_contour], -1, (255,255,255), thickness=2)
     cv2.drawContours(white, [main_contour], -1, (255, 255, 255), 3)
-    cv2.fillPoly(white, pts=[main_contour], color=(255, 255, 255))
+    cv2.fillPoly(white, pts=[main_contour], color=(255, 255, 255))          #Fully removed islands an not connected pieces of the mask
     cv2.imshow("White", white)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-    # Funzione di smoothing
-    def smooth_curve(points, smooth_factor=5):
-        points = points[np.argsort(points[:, 1])]  # Ordina per y crescente
-        ys = points[:, 1]
-        xs = points[:, 0]
-        spline = UnivariateSpline(ys, xs, s=smooth_factor)
-        ys_dense = np.linspace(ys.min(), ys.max(), white_image.shape[0]).astype(np.int32)
-        xs_smooth = spline(ys_dense).astype(np.int32)
-        return np.stack([xs_smooth, ys_dense], axis=1)
+    lrail_p_x = []
+    lrail_p_y = []
+    rrail_p_x = []
+    rrail_p_y = []
+    for j in range(h-1,0,-15):
+        i=0
+        left_x_temp_points = []
+        right_x_temp_points = []
+        while i<w:
+            if white[j][i]==255:
+                left_x_temp_points.append(i)
+                i+=1
+                while i<w and white[j][i]==255:
+                    i+=1
+                right_x_temp_points.append(i-1)
+            else:
+                i+=1
+        if len(left_x_temp_points)>0 and len(right_x_temp_points)>0:
+            left_x_temp_points = np.array(left_x_temp_points)
+            lrail_p_x.append(left_x_temp_points.min())
+            lrail_p_y.append(j)
+            right_x_temp_points = np.array(right_x_temp_points)
+            rrail_p_x.append(right_x_temp_points.max())
+            rrail_p_y.append(j)
 
-    left_smooth = smooth_curve(left_side)
-    right_smooth = smooth_curve(right_side)
-
-    # Crea nuova maschera
-    new_mask = np.zeros_like(white_image)
-
-    for (x_left, y), (x_right, _) in zip(left_smooth, right_smooth):
-        if 0 <= x_left < white_image.shape[1] and 0 <= x_right < white_image.shape[1] and x_left < x_right:
-            cv2.line(new_mask, (x_left, y), (x_right, y), 255, 1)
-
-    # Mostra la nuova maschera
-    cv2.imshow("new_mask", new_mask)
+    IMAGE_COPY = np.zeros_like(white)
+    i = 0
+    right_rail_points = np.stack((rrail_p_x, rrail_p_y), axis=1)
+    left_rail_points = np.stack((lrail_p_x, lrail_p_y), axis=1)
+    points = np.array(left_rail_points)
+    points = np.concatenate((points, np.array(right_rail_points)))
+    for p in right_rail_points:
+      cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (255, 255, 255), thickness=4)
+      i = i + 1
+    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
+    #FIXME da mettere in un metodo
+    lrail_p_x = np.array(lrail_p_x)
+    lrail_p_y = np.array(lrail_p_y)
 
+    coeffs = np.polyfit(lrail_p_y, lrail_p_x, deg=3)  # Polinomio di grado 3
+    poly = np.poly1d(coeffs)
 
-    a = white_image.astype(bool)
+    # Definizione di un intervallo più fitto per la curva
+    y_smooth = np.linspace(lrail_p_y.min(), lrail_p_y.max(), 200)
+    x_fit = poly(y_smooth)
+
+    xy_array = np.column_stack((x_fit, y_smooth))
+
+    IMAGE_COPY = np.zeros_like(white)
+    i = 0
+    for p in xy_array:
+        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (255, 255, 255), thickness=2)
+        i = i + 1
+    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    rrail_p_x = np.array(rrail_p_x)
+    rrail_p_y = np.array(rrail_p_y)
+
+    coeffs2 = np.polyfit(rrail_p_y, rrail_p_x, deg=3)  # Polinomio di grado 3
+    poly2 = np.poly1d(coeffs2)
+
+    # Definizione di un intervallo più fitto per la curva
+    y_smooth2 = np.linspace(rrail_p_y.min(), rrail_p_y.max(), 200)
+    x_fit2 = poly2(y_smooth2)
+
+    xy_array2 = np.column_stack((x_fit2, y_smooth2))
+
+    IMAGE_COPY = np.zeros_like(white)
+    i = 0
+    for p in xy_array2:
+        cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (255, 255, 255), thickness=2)
+        i = i + 1
+    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    xy_array2 = xy_array2[::-1]
+    poly_points = np.array(xy_array,dtype=np.int32)
+    poly_points = np.concatenate((poly_points, np.array(xy_array2,dtype=np.int32)))
+    poly_points = poly_points.reshape((-1, 1, 2))
+    IMAGE_COPY = np.zeros_like(white)
+    cv2.polylines(IMAGE_COPY, [poly_points], isClosed=True, color=(255, 255, 255), thickness=2)
+    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    #TODO fill poly e passarlo in return e veere che succede
+
+    a = white.astype(bool)
     return a
     #return mask
 

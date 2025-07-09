@@ -3,6 +3,7 @@ import os
 import cv2
 import numpy as np
 import torch
+from scipy.signal import savgol_filter
 #from sam2.benchmark import predictor
 from torchvision.ops import box_convert
 
@@ -346,7 +347,7 @@ def check_mask_containment(base_mask, query_mask) -> bool:
 
 def refine_mask(image, image_predictor, points, labels):
     print("Creating masks...")
-    predictor.set_image(image)
+    image_predictor.set_image(image)
     masks, scores, logits = image_predictor.predict(
         point_coords=points,
         point_labels=labels,
@@ -701,3 +702,280 @@ def is_mask_in_box(mask, box, margin=10):
     )
 
     return mask_in_box
+
+def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):
+    #Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
+
+    width = image_source.shape[1]
+    height = image_source.shape[0]
+    gd_width = gd_box[2]-gd_box[0]
+    x = gd_box[0]
+
+    # -----------------CANNY EDGES--------------------
+    image_cropped = image_source[int(gd_box[1]):int(gd_box[3]), int(gd_box[0]):int(gd_box[2])]
+    img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
+    # Blur the image for better edge detection
+    img_blur = cv2.GaussianBlur(img_gray, (7, 7), 0)
+    # Canny Edge Detection
+    edges = cv2.Canny(image=img_blur, threshold1=60, threshold2=90)  # Canny Edge Detection
+    # FIXME Come fare per evitare che gli edges rilevati non siano altro che le rails?
+    # -----------------HUGS EDGES--------------------
+    x = int(gd_box[0])
+    y = int(gd_box[1])
+    hc = image_cropped.shape[0]
+    wc = image_cropped.shape[1]
+
+    # Overlaps the edge detection of the cropped GD detection box onto the fullsize image, full black so that there are no other contours except the ones of Canny
+    blacked_image = np.zeros_like(image_source)
+    blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
+    blacked_image[y:y + hc, x:x + wc] = edges
+
+    #Find contours from the edge image
+    contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    #Draw contours on a blank canvas (for visualization)
+    output = np.zeros_like(blacked_image)
+    cv2.drawContours(output, contours, -1, (255), 1)
+
+    #Filter meaningful curves by length or area
+    meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 200]
+
+    overlay = image_source.copy()
+    cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)
+
+    black_and_mask = np.zeros_like(image_source)
+    cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
+
+    mask_image = None
+    #Getting only the rail detection mask
+    #TODO visto che ho accesso alle maschere, devo mette i punti rossi dentro gli stacoli e i punti verdi toglierli se dentro le maschere
+    for obj_id, mask in rails_masks.items():
+        h, w = mask.shape[-2:]
+        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
+        mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+        break
+
+    # ----------------Extracting some points from mask -------------------
+    # Creating a black image with only the curves of the mask
+
+    black_and_mask = np.zeros_like(image_source)
+    cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
+
+    #Here if previous mask was not calculated (ex. first frame), it tries to prompt some points centered in the rails
+    if mask_image is None:
+        #Calculating three different "middle" points to get the center between rails
+        gdbox_midde_point = x + int(gd_width / 2)
+        image_midde_point = int(width / 2)
+        average_points = []
+        average_levels = []
+        for j in range(y+hc,y+hc-int(0.03*y+hc),-1):
+            for i in range(x,x+wc,3):
+                if black_and_mask[j][i][1] == 255:
+                    average_points.append(i)
+            if len(average_points) > 0:
+                average_levels.append(int(sum(average_points) / len(average_points)))
+
+        if len(average_levels) > 0:
+            edges_rails_midde_point = int(sum(average_points) / len(average_points))
+            #Faccio la media dei tre centri calcolati sopra
+            average_midde_point = int((gdbox_midde_point + image_midde_point + edges_rails_midde_point) / 3)
+        else:
+            average_midde_point = int((gdbox_midde_point + image_midde_point) / 2)
+
+        points = []
+        points.append([average_midde_point, height-10])
+        points.append([average_midde_point, height-50])
+        points.append([average_midde_point-20, height - 50])
+        points.append([average_midde_point+20, height - 50])
+        points.append([average_midde_point, height - 90])
+        points.append([average_midde_point, height - 130])
+        points.append([average_midde_point+20, height - 130])
+        points.append([average_midde_point-20, height - 130])
+        points.append([average_midde_point, height - 170])
+        labels = np.ones(len(points))
+    else:
+        x_mask_points = np.array([])
+        mask_middle_points = np.array([])
+        avg_array = np.array([])
+        y_of_avg_array = np.array([])
+        for j in range(y + hc, y, -10):
+            for i in range(x, x + wc, 10):
+                if mask_image[j][i][0] != 0 or mask_image[j][i][1] != 0 or mask_image[j][i][2] != 0:
+                    x_mask_points = np.append(x_mask_points, [i])
+            if len(x_mask_points) > 0:
+                avg_x = int(sum(x_mask_points) / len(x_mask_points))
+                mask_middle_points = np.append(mask_middle_points, [avg_x, j])
+                avg_array = np.append(avg_array, avg_x)
+                y_of_avg_array = np.append(y_of_avg_array, j)
+            x_mask_points = np.array([])
+
+        #Calculating smooth curve
+        xhat = savgol_filter(avg_array, 10, 3)
+        savol_array = []
+        x_avg_array_filtered = np.array(xhat)
+        for i in range(len(y_of_avg_array)):
+            savol_array.append([x_avg_array_filtered[i], y_of_avg_array[i]])
+
+        #From curve generating point prompts at both sides
+        savol_array_left = savol_array.copy()
+        savol_array_expanded = []
+        savol_array_expanded_negative = []
+        for i in range(len(savol_array)):        #TODO per migliorare i point prompt, potrei mettere dei punti a label negativa a destra e sinistra
+            if i>0 and i<len(savol_array_left)-1 and (i%6) == 0:
+                #savol_array_expanded.append(savol_array[i])
+                current_y_in_rail_box = savol_array[i][1] - y
+                savol_array_expanded.append([savol_array[i][0]-int(current_y_in_rail_box*0.12), savol_array[i][1]])
+                savol_array_expanded.append([savol_array[i][0]+int(current_y_in_rail_box*0.12), savol_array[i][1]])
+                savol_array_expanded_negative.append([savol_array[i][0] - int(current_y_in_rail_box * 0.90), savol_array[i][1]])
+                savol_array_expanded_negative.append([savol_array[i][0] + int(current_y_in_rail_box * 0.90), savol_array[i][1]])
+        points = np.array(np.concatenate((savol_array_expanded, savol_array_expanded_negative)))
+        labels = np.ones(len(savol_array_expanded))
+        neg_labels = np.zeros(len(savol_array_expanded_negative))
+        labels = np.concatenate((labels, neg_labels))
+
+    return points, labels
+
+def smooth_curve_from_points(rail_points_x, rail_points_y):
+    rail_points_x = np.array(rail_points_x)
+    rail_points_y = np.array(rail_points_y)
+    coeffs = np.polyfit(rail_points_y, rail_points_x, deg=3)  # Polinomio di grado 3
+    poly = np.poly1d(coeffs)
+    # Definizione di un intervallo più fitto per la curva
+    y_smooth = np.linspace(rail_points_y.min(), rail_points_y.max(), 200)
+    x_fit = poly(y_smooth)
+    xy_array = np.column_stack((x_fit, y_smooth))
+    return xy_array
+
+
+def refine_mask(mask, previous_mask=None):
+    h, w = mask.shape[-2:]
+    black_image = np.zeros((h, w), dtype=np.uint8)
+
+    # Convert your mask to uint8 and pad it properly
+    mask = mask.astype('uint8')
+
+    #Somplifying image with blur and morphology, removing noise
+    # FloodFill requires the mask to be (H+2, W+2)
+    padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
+    padded_mask[1:h + 1,
+    1:w + 1] = mask
+    cv2.floodFill(black_image, padded_mask, (0, 0), 255)
+    black_and_white_mask_image = cv2.bitwise_not(black_image)
+
+    # blur
+    blur = cv2.GaussianBlur(black_and_white_mask_image, (0, 0), sigmaX=3, sigmaY=3)
+    # otsu threshold
+    thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    # apply morphology
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+
+    #----------Cleaning and obtaining filled and crisp mask in BW----------
+    black_image = np.zeros((h, w), dtype=np.uint8)
+    padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
+    padded_mask[1:h + 1,
+    1:w + 1] = morph
+    cv2.floodFill(black_image, padded_mask, (0, 0), 255)
+    black_and_white_mask_image = cv2.bitwise_not(black_image)
+    #----------------checking old mask------------
+    if previous_mask is not None:
+        previous_mask_image = previous_mask*255
+        previous_mask_image = previous_mask_image.astype(black_and_white_mask_image.dtype)
+
+    #Removing mask "islands"or other noise not connected to the main detected object
+    contours, _ = cv2.findContours(black_and_white_mask_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    main_contour = max(contours, key=cv2.contourArea)
+    main_contour = main_contour[:, 0, :]  # Remove nesting
+
+    black_image = np.zeros_like(black_and_white_mask_image)
+    cv2.drawContours(black_image, [main_contour], -1, (255, 255, 255), 3)
+    cv2.fillPoly(black_image, pts=[main_contour], color=(255, 255, 255))
+
+    lrail_p_x = []
+    lrail_p_y = []
+    rrail_p_x = []
+    rrail_p_y = []
+    for j in range(h-1,0,-3):
+        i=0
+        left_x_temp_points = []
+        right_x_temp_points = []
+        while i<w:
+            if black_image[j][i]==255:
+                left_x_temp_points.append(i)
+                i+=1
+                while i<w and black_image[j][i]==255:
+                    i+=1
+                right_x_temp_points.append(i-1)
+            else:
+                i+=1
+        if len(left_x_temp_points)>0 and len(right_x_temp_points)>0:
+            left_x_temp_points = np.array(left_x_temp_points)
+            lrail_p_x.append(left_x_temp_points.min())
+            lrail_p_y.append(j)
+            right_x_temp_points = np.array(right_x_temp_points)
+            rrail_p_x.append(right_x_temp_points.max())
+            rrail_p_y.append(j)
+
+    xy_array_left_rail = smooth_curve_from_points(lrail_p_x, lrail_p_y)
+
+    xy_array_right_rail = smooth_curve_from_points(rrail_p_x, rrail_p_y)
+
+    xy_array_right_rail = xy_array_right_rail[::-1]
+    poly_points = np.array(xy_array_left_rail,dtype=np.int32)
+    poly_points = np.concatenate((poly_points, np.array(xy_array_right_rail,dtype=np.int32)))
+    poly_points = poly_points.reshape((-1, 1, 2))
+    polygonal_mask = np.zeros_like(black_image)
+    cv2.polylines(polygonal_mask, [poly_points], isClosed=True, color=(255, 255, 255), thickness=2)
+    cv2.fillPoly(polygonal_mask, pts=[poly_points], color=(255, 255, 255))
+
+    #FIXME da mettere in un metodo
+    #Using past mask for compensation of great variations in the mask
+    if previous_mask is not None:
+        intersection = cv2.bitwise_and(polygonal_mask, previous_mask_image)
+        result = cv2.bitwise_xor(intersection, polygonal_mask)
+        scan_height = int(3*h/4)    #Checking only the bottom part of the mask, wich is the part that sholud be the steadiest
+        #Intersected mask (difference between old and new mask) pixel counting
+        white_px = 0
+        for j in range(scan_height,h):
+            for i in range(w):
+                if result[j][i] == 255:
+                    white_px += 1
+        #Total old mask pixel counting
+        tot_px = 0
+        for j in range(scan_height,h):
+            for i in range(w):
+                if previous_mask_image[j][i] == 255:
+                    tot_px += 1
+        difference_percentage = white_px / tot_px
+        if difference_percentage>0.05:      #Using old mask bottom part if the canche is too drastic
+            old_mask_copy = previous_mask_image.copy()
+            for j in range(scan_height):
+                for i in range(w):
+                    old_mask_copy[j][i] = 0
+            fixed_image = cv2.bitwise_or(polygonal_mask, old_mask_copy)
+            polygonal_mask = fixed_image
+    #Expanding the mask at the edges for better coverage of the rails
+    blur = cv2.GaussianBlur(polygonal_mask, (0, 0), sigmaX=4, sigmaY=1)
+    thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY)[1]
+    a = thresh.astype(bool)
+    return a
+
+def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggetto poggiato sul terreno e cambiare il coolore in base alla vicinanza al binario
+    mask = np.array(mask, dtype=np.uint8)
+    mask = mask.squeeze()
+    rail_mask = np.array(rail_mask, dtype=np.uint8)
+    rail_mask = rail_mask.squeeze()
+    intersection = cv2.bitwise_and(mask, rail_mask)
+    if intersection.sum()>0:
+        color = np.array([255 / 255, 136 / 255, 0 / 255, 0.5])
+    else:
+        color = np.array([234 / 255, 255 / 255, 0 / 255, 0.5])
+    h, w = mask.shape[-2:]
+    #mask = mask.astype(np.uint8)
+    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    # Try to smooth contours
+    contours = [cv2.approxPolyDP(contour, epsilon=0.01, closed=True) for contour in contours]
+    mask_image = cv2.drawContours(mask_image, contours, -1, (1, 1, 1, 0.5), thickness=3)
+    ax.imshow(mask_image)

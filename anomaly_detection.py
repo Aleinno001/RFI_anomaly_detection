@@ -126,342 +126,21 @@ def parse_args():
 
     return parser.parse_args()
 
-def extract_main_railway_points_and_labels(image_source, gd_boxes, frame_index):
-    # -----------------CANNY EDGES--------------------
-    # Convert to graycsale
-    image_cropped = image_source[int(gd_boxes[1]):int(gd_boxes[3]), int(gd_boxes[0]):int(gd_boxes[2])]
-
-    img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
-
-    # Blur the image for better edge detection
-    img_blur = cv2.GaussianBlur(img_gray, (9, 9), 0)
-
-    # Canny Edge Detection
-    edges = cv2.Canny(image=img_blur, threshold1=50, threshold2=90)  # Canny Edge Detection
-    # Display Canny Edge Detection Image
-    # cv2.imshow('Canny Edge Detection', edges)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-
-    # -----------------HUGS EDGES--------------------
-    x = int(gd_boxes[0])
-    y = int(gd_boxes[1])
-    hc = image_cropped.shape[0]
-    wc = image_cropped.shape[1]
-
-    # Overlaps the edge detection of the cropped GD detection box onto the fullsize image, full black so that there are no other contours except the ones of Canny
-    blacked_image = np.zeros_like(image_source)
-    blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
-    blacked_image[y:y + hc, x:x + wc] = edges
-
-    # Step 3: Find contours from the edge image
-    contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Step 4: Draw contours on a blank canvas (for visualization)
-    output = np.zeros_like(blacked_image)
-    cv2.drawContours(output, contours, -1, (255), 1)
-
-    # Optional: Filter meaningful curves by length or area
-    meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 300]
-
-    # Step 5: Draw meaningful contours separately
-    # filtered_output = np.zeros_like(img_gray)
-    # cv2.drawContours(filtered_output, meaningful_contours, -1, (255), 1)
-    # cv2.imshow('Countours', filtered_output)
-    # cv2.waitKey(0)
-    # Overlay curves on the original color image
-    overlay = image_source.copy()
-    cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
-
-    # Showing final edge detection result of the rails
-    if frame_index == 40 or frame_index == 0:
-        cv2.imshow('Countours', overlay)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-
-    # ----------------Extracting some points from mask -------------------
-    # Creating a black image with only the curves of the mask
-
-    black_and_mask = np.zeros_like(image_source)
-    cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
-    points = []
-    # Trying negative label points outside the main rails to refine sam segmentation
-    neg_points = []
-    found = True
-
-    #Version 2
-    #Finding the two points of the rails at the base of the image
-    left_rail_base_point = [int(wc/2),hc]
-    right_rail_base_point = [int(wc/2),hc]
-    found = False
-    scanning_height = y + hc
-    while found == False:
-        for i in range(0,int(wc/2),1):
-            if black_and_mask[scanning_height][x+i][1]==255:
-                left_rail_base_point[1] = scanning_height
-                left_rail_base_point[0] = i
-                found = True
-                break
-    found = False
-    while found == False:
-        for i in range(wc,int(wc/2),-1):
-            if black_and_mask[scanning_height][x+i][1]==255:
-                right_rail_base_point[1] = scanning_height
-                right_rail_base_point[0] = i
-                found = True
-                break
-
-    number_of_left_points = 0
-    boundaries = numpy.empty(2)
-    while found == True:
-        found = False
-        for i in range(left_rail_base_point[0]-25, left_rail_base_point[0]+25, 1):
-            if black_and_mask[scanning_height][x + i][1] == 255:
-                boundaries[0]=i
-                j=i
-                while black_and_mask[scanning_height,x+j][1]==255:
-                    j=j+1
-                boundaries[1]=j-1
-                left_rail_base_point[0]=int((boundaries[0]+boundaries[1])/2)
-                left_rail_base_point[1]=scanning_height
-                points.append([x+left_rail_base_point[0], left_rail_base_point[1]])
-                offset = 4
-                neg_points.append([x + i - offset * 10, scanning_height])
-                number_of_left_points = number_of_left_points + 1
-                found = True
-                break
-        if scanning_height <= (y + hc / 2):
-            found=False
-        scanning_height = scanning_height - 25
-    number_of_right_points = 0
-    scanning_height = y + hc
-    found = True
-    while found == True:
-        found = False
-        for i in range(right_rail_base_point[0]+25, right_rail_base_point[0]-25, -1):
-            if black_and_mask[scanning_height][x + i][1] == 255:
-                boundaries[0] = i
-                j = i
-                while black_and_mask[scanning_height,x+j][1]==255:
-                    j=j-1
-                boundaries[1] = j + 1
-                right_rail_base_point[0] = int((boundaries[0] + boundaries[1]) / 2)
-                right_rail_base_point[1] = scanning_height
-                points.append([x+right_rail_base_point[0], right_rail_base_point[1]])
-                offset = 4
-                neg_points.append([x + i + offset * 10, scanning_height])
-                number_of_right_points = number_of_right_points + 1
-                found = True
-                break
-        if scanning_height <= (y + hc / 2):
-            found = False
-        scanning_height = scanning_height - 25
-    #Searching for couples of points to then add middlepoints between rails
-    cicles = number_of_left_points
-    if number_of_left_points>number_of_right_points:
-        cicles = number_of_right_points
-    for i in range(cicles):
-        height = points[i][1]
-        for j in range(number_of_right_points):
-            if points[number_of_left_points+j][1] == height:
-                width = points[number_of_left_points+j][0] - points[i][0]
-                points.append([points[i][0]+int(width/2),height])
-                points.append([points[i][0]+int(width/3),height])
-                points.append([points[i][0]+int(2*width/3), height])
-                points.append([points[i][0] + int(width / 5), height])
-                points.append([points[i][0] + int(4 * width / 5), height])
-                break
-
-
-    #------end vrsion 2
-    '''
-    scanning_height = y + hc
-    while found == False:
-        for i in range(0, int(wc / 2), 1):
-            if black_and_mask[scanning_height][x + i][1] == 255:  # FIXME ricavare pixel
-                points.append([x + i, scanning_height])
-                # Adding two extra points around the first to improve segmentation accuracy on the rails
-                offset = 4  # FIXME da fare parametrico
-                points.append([x + i, scanning_height - offset * 3])
-                # points.append([x+i-offset,scanning_height])   #FIXME da erificare se aggiungendo l'offset sbordo dalla box di grounding dino
-                points.append([x + i + offset, scanning_height])
-
-                neg_points.append([x + i - offset * 10, scanning_height])
-                found = True
-                break
-        scanning_height = scanning_height - 1
-    scanning_height = y + hc
-    found = False
-    while found == False:
-        for i in range(wc, int(wc / 2), -1):
-            if black_and_mask[scanning_height][x + i][1] == 255:
-                points.append([x + i, scanning_height])
-                # Adding two extra points around the first to improve segmentation accuracy on the rails
-                offset = 4
-                points.append([x + i, scanning_height - offset * 3])
-                points.append([x + i - offset, scanning_height])
-                # points.append([x + i + offset, scanning_height])
-
-                neg_points.append([x + i + offset * 10, scanning_height])
-                found = True
-                break
-        scanning_height = scanning_height - 1
-    # Middle point between the two rails at the base
-    # FIXME da verificare se sono state trovate entramnbe le rail, non è detto perche edge highlight potrebbe non funzionare
-    # FIXME l'offset verticale deve essere parametrico
-    points.append([x + int(wc / 2), y + hc])
-    points.append([x + int(wc / 3), y + hc])
-    points.append([x + int(wc * 2 / 3), y + hc])
-    points.append([x + int(wc / 3), y + hc - 20])
-    points.append([x + int(wc / 2), y + hc - 20])
-    points.append([x + int(wc * 2 / 3), y + hc - 20])
-    points.append([x + int(wc / 2) - int(wc / 4), y + hc - 40])
-    points.append([x + int(wc / 2) + int(wc / 4), y + hc - 40])
-    points.append([x + int(wc / 2) - int(wc / 4), y + hc - 60])
-    points.append([x + int(wc / 2) + int(wc / 4), y + hc - 60])
-    points.append([x + int(wc / 2), y + hc - 80])
-    '''
-
-    #TODO Calcolare la prospettiva dell'immagine, sapendo il parallelismo dei due binari e langolo che hanno/un computer vision che lo capisce da solo
-    #TODO Magari riesco a risolvere il problema legato al fatto che prende più binari usando la prospettiva
-
-
-    pos_labels = np.ones(len(points))
-    neg_labels = np.zeros(len(neg_points))
-    labels = np.concatenate((pos_labels, neg_labels))
-
-    points = np.concatenate((points, neg_points))
-    bl_point = neg_points[0]
-    br_point = neg_points[0]
-    tl_point = neg_points[0]
-    tr_point = neg_points[0]
-    min_height = 1000
-    max_height = 0
-    top_points = []
-    bottom_points = []
-    for i in range(len(neg_points)):
-        if neg_points[i][1] < min_height:
-            min_height = neg_points[i][1]
-        elif neg_points[i][1] > max_height:
-            max_height = neg_points[i][1]
-
-    for i in range(len(neg_points)):
-        if neg_points[i][1] == min_height:
-            top_points.append(neg_points[i])
-        elif neg_points[i][1] == max_height:
-            bottom_points.append(neg_points[i])
-
-    min_x = 1000
-    max_x = 0
-    index_tl = 0
-    index_tr = 0
-    for i in range(len(top_points)):
-        if top_points[i][0] < min_x:
-            min_x = top_points[i][0]
-            index_tl = i
-        elif top_points[i][0] > max_x:
-            max_x = top_points[i][0]
-            index_tr = i
-    tr_point = top_points[index_tr]
-    tl_point = top_points[index_tl]
-
-    min_x = 1000
-    max_x = 0
-    index_bl = 0
-    index_br = 0
-    for i in range(len(bottom_points)):
-        if bottom_points[i][0] < min_x:
-            min_x = bottom_points[i][0]
-            index_bl = i
-        elif bottom_points[i][0] > max_x:
-            max_x = bottom_points[i][0]
-            index_br = i
-    br_point = bottom_points[index_br]
-    bl_point = bottom_points[index_bl]
-
-    #Perspective trensformation
-    starting_points = np.array([
-        tl_point,
-        tr_point,
-        bl_point,
-        br_point
-    ], dtype=np.float32)
-
-    T_width = int(br_point[0] - bl_point[0])
-    T_height = int(tl_point[1] - bl_point[1])
-
-    ending_points = np.array([
-        [0, 0],
-        [T_width, 0],
-        [0, T_height],
-        [T_width, T_height]
-    ], dtype=np.float32)
-
-    # Compute transformation matrix (THIS is the correct function)
-    T = cv2.getPerspectiveTransform(starting_points, ending_points)
-
-    # Convert image
-    image_to_trasf = cv2.cvtColor(image_source, cv2.COLOR_BGR2RGB)
-
-    # Apply the perspective warp
-    imgTrans = cv2.warpPerspective(image_to_trasf, T, (T_width, T_height))
-
-    # Display result
-    plt.figure()
-    plt.imshow(imgTrans)
-    plt.axis("off")
-    plt.show()
-
-    IMAGE_COPY = image_source.copy()
-    i=0
-    for p in points:
-        if i < (len(points)-len(neg_points)):
-            cv2.circle(IMAGE_COPY, (int(p[0]),int(p[1])), 2, (0, 255, 0),thickness=2)
-        else:
-            cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (0, 0, 255), thickness=2)
-        i = i+1
-    cv2.imshow("Visualizing POiNTS", IMAGE_COPY)
-    cv2.waitKey(0)
-
-    return points, labels
-
-def media_robusta(valori, epsilon=1e-6):
-    mediana = np.median(valori)
-    distanze = [abs(x - mediana) + epsilon for x in valori]
-    pesi = [1 / d for d in distanze]
-    somma_pesi = sum(pesi)
-    pesi_normalizzati = [p / somma_pesi for p in pesi]
-    return sum(x * w for x, w in zip(valori, pesi_normalizzati))
-
 def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):
-    #TODO Come fare per mantenere stabile la forma della mschera dei binari
     #Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
 
     width = image_source.shape[1]
     height = image_source.shape[0]
-    image_midde_point = int(width / 2)
     gd_width = gd_box[2]-gd_box[0]
-    gd_height = gd_box[3]-gd_box[1]
     x = gd_box[0]
-    y = gd_box[1]
-    gdbox_midde_point = x+int(gd_width / 2)
 
     # -----------------CANNY EDGES--------------------
-    # Convert to graycsale
     image_cropped = image_source[int(gd_box[1]):int(gd_box[3]), int(gd_box[0]):int(gd_box[2])]
-
     img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
-
     # Blur the image for better edge detection
     img_blur = cv2.GaussianBlur(img_gray, (7, 7), 0)
-
     # Canny Edge Detection
     edges = cv2.Canny(image=img_blur, threshold1=60, threshold2=90)  # Canny Edge Detection
-    #Display Canny Edge Detection Image
-    #cv2.imshow('Canny Edge Detection', edges)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
-
     # FIXME Come fare per evitare che gli edges rilevati non siano altro che le rails?
     # -----------------HUGS EDGES--------------------
     x = int(gd_box[0])
@@ -474,119 +153,42 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
     blacked_image[y:y + hc, x:x + wc] = edges
 
-    # Step 3: Find contours from the edge image
+    #Find contours from the edge image
     contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Step 4: Draw contours on a blank canvas (for visualization)
+    #Draw contours on a blank canvas (for visualization)
     output = np.zeros_like(blacked_image)
     cv2.drawContours(output, contours, -1, (255), 1)
 
-    # Optional: Filter meaningful curves by length or area
+    #Filter meaningful curves by length or area
     meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 200]
 
-    # Step 5: Draw meaningful contours separately
-    # filtered_output = np.zeros_like(img_gray)
-    # cv2.drawContours(filtered_output, meaningful_contours, -1, (255), 1)
-    # cv2.imshow('Countours', filtered_output)
-    # cv2.waitKey(0)
-    # Overlay curves on the original color image
     overlay = image_source.copy()
-    cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)  # Green lines
-
-    # Showing final edge detection result of the rails
-    #cv2.imshow('Countours', overlay)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
+    cv2.drawContours(overlay, meaningful_contours, -1, (0, 255, 0), 2)
 
     black_and_mask = np.zeros_like(image_source)
     cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
 
-    #From mask of the railway obtaining the points to segment
-
     mask_image = None
-
+    #Getting only the rail detection mask
+    #TODO visto che ho accesso alle maschere, devo mette i punti rossi dentro gli stacoli e i punti verdi toglierli se dentro le maschere
     for obj_id, mask in rails_masks.items():
         h, w = mask.shape[-2:]
         color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
         mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
         break
 
-    '''
-    x_mask_points = np.array([])
-    y_mask_points = np.array([])
-    mask_middle_points = np.array([])
-    avg_array = np.array([])
-    y_of_avg_array = np.array([])
-    for j in range(y+hc,y,-3):
-        for i in range(x,x+wc,3):
-            if black_and_mask[j][i][1] == 255:
-                x_mask_points = np.append(x_mask_points, [i])
-        if len(x_mask_points) > 0:
-            avg_x = int(sum(x_mask_points) / len(x_mask_points))
-            mask_middle_points = np.append(mask_middle_points, [avg_x,j])
-            avg_array = np.append(avg_array, avg_x)
-            y_of_avg_array = np.append(y_of_avg_array, j)
-        x_mask_points = np.array([])
-
-    # Reshape the flat array into (N, 2)
-    curve_points = mask_middle_points.reshape((-1, 2))
-
-    # Convert to int32 (required by OpenCV)
-    curve_points = np.round(curve_points).astype(np.int32)
-
-    # Reshape to (N, 1, 2) as required by cv2.polylines
-    curve_points = curve_points.reshape((-1, 1, 2))
-
-    image_copy = np.copy(image_source)
-    # Draw the curve
-    cv2.polylines(image_copy, [curve_points], isClosed=False, color=(0, 255, 0), thickness=2)
-
-    # Show image
-    cv2.imshow("Image with Curve", image_copy)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-    xhat = savgol_filter(avg_array, 51, 3)
-    savol_array = []
-    x_avg_array_filtered = np.array(xhat)
-    for i in range(len(y_of_avg_array)):
-        savol_array.append([x_avg_array_filtered[i],y_of_avg_array[i]])
-
-    curve = np.array(savol_array, dtype=np.float32)
-    curve = np.round(curve).astype(np.int32)
-
-    # Reshape for cv2.polylines: (N, 1, 2)
-    curve = curve.reshape((-1, 1, 2))
-
-    image_copy = np.copy(image_source)
-    # Draw the curve
-    cv2.polylines(image_copy, [curve], isClosed=False, color=(0, 255, 0), thickness=2)
-
-    # Show image
-    cv2.imshow("Image with savol_array", image_copy)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    '''
-
-    # TODO Le strisce degli edge potrebbero non essere abbastanza lunghe per superare il limite minimo di 300 (per esempio il binario è interrotto da un ostacolo) o l'edge potrebbe fondersi ad un altro elemento (tipo un ostacolo)
-
     # ----------------Extracting some points from mask -------------------
     # Creating a black image with only the curves of the mask
 
     black_and_mask = np.zeros_like(image_source)
     cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
-    points = []
-    # Trying negative label points outside the main rails to refine sam segmentation
-    neg_points = []
-    found = True
 
+    #Here if previous mask was not calculated (ex. first frame), it tries to prompt some points centered in the rails
     if mask_image is None:
-        left_rail_base_point = [int(wc / 2), hc]
-        right_rail_base_point = [int(wc / 2), hc]
-        foundLeft = False
-        scanning_height = y + hc
-        #TODO invece di cercare solo due pixel alla base forse è meglio prendere tutta una riga e fare la deia dei pixel degli edge
-
+        #Calculating three different "middle" points to get the center between rails
+        gdbox_midde_point = x + int(gd_width / 2)
+        image_midde_point = int(width / 2)
         average_points = []
         average_levels = []
         for j in range(y+hc,y+hc-int(0.03*y+hc),-1):
@@ -596,37 +198,11 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
             if len(average_points) > 0:
                 average_levels.append(int(sum(average_points) / len(average_points)))
 
-        '''
-        while foundLeft == False and scanning_height > y+hc-20:      #TODO rendere il "20" pixel parametrico
-            for i in range(0, int(wc / 2), 1):
-                if black_and_mask[scanning_height][x + i][1] == 255:
-                    left_rail_base_point[1] = scanning_height
-                    left_rail_base_point[0] = i
-                    foundLeft = True
-                    break
-            scanning_height = scanning_height - 1
-
-        foundRight = False
-        while foundRight == False and scanning_height > y+hc-20:
-            for i in range(wc, int(wc / 2), -1):
-                if black_and_mask[scanning_height][x + i][1] == 255:  # FIXME il problema che si blocca è circa qua
-                    right_rail_base_point[1] = scanning_height
-                    right_rail_base_point[0] = i
-                    foundRight = True
-                    break
-            scanning_height = scanning_height - 1
-        '''
-
-        #if foundLeft and foundRight:
         if len(average_levels) > 0:
-            #edges_rails_midde_point = x + int((left_rail_base_point[0] + right_rail_base_point[0]) / 2)
             edges_rails_midde_point = int(sum(average_points) / len(average_points))
-
             #Faccio la media dei tre centri calcolati sopra
-            #average_midde_point = media_robusta([gdbox_midde_point, edges_rails_midde_point, image_midde_point])
             average_midde_point = int((gdbox_midde_point + image_midde_point + edges_rails_midde_point) / 3)
         else:
-            #average_midde_point = media_robusta([gdbox_midde_point, image_midde_point])
             average_midde_point = int((gdbox_midde_point + image_midde_point) / 2)
 
         points = []
@@ -642,7 +218,6 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
         labels = np.ones(len(points))
     else:
         x_mask_points = np.array([])
-        y_mask_points = np.array([])
         mask_middle_points = np.array([])
         avg_array = np.array([])
         y_of_avg_array = np.array([])
@@ -657,48 +232,15 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
                 y_of_avg_array = np.append(y_of_avg_array, j)
             x_mask_points = np.array([])
 
-        # Reshape the flat array into (N, 2)
-        curve_points = mask_middle_points.reshape((-1, 2))
-
-        # Convert to int32 (required by OpenCV)
-        curve_points = np.round(curve_points).astype(np.int32)
-
-        # Reshape to (N, 1, 2) as required by cv2.polylines
-        curve_points = curve_points.reshape((-1, 1, 2))
-
-        image_copy = np.copy(image_source)
-        # Draw the curve
-        cv2.polylines(image_copy, [curve_points], isClosed=False, color=(0, 255, 0), thickness=2)
-
-        # Show image pre filtering
-        #cv2.imshow("Image with Curve", image_copy)
-        #cv2.waitKey(0)
-        #cv2.destroyAllWindows()
-
+        #Calculating smooth curve
         xhat = savgol_filter(avg_array, 10, 3)
         savol_array = []
         x_avg_array_filtered = np.array(xhat)
         for i in range(len(y_of_avg_array)):
             savol_array.append([x_avg_array_filtered[i], y_of_avg_array[i]])
 
-        curve = np.array(savol_array, dtype=np.float32)
-        curve = np.round(curve).astype(np.int32)
-
-        # Reshape for cv2.polylines: (N, 1, 2)
-        curve = curve.reshape((-1, 1, 2))
-
-        image_copy = np.copy(image_source)
-        # Draw the curve
-        cv2.polylines(image_copy, [curve], isClosed=False, color=(0, 255, 0), thickness=2)
-
-        # Show image after savol filter
-        #cv2.imshow("Image with savol_array", image_copy)
-        #cv2.waitKey(0)
-        #cv2.destroyAllWindows()
-
-        #prendo il savola array e ne aggiungo una copia a destra e sinistra e tolgo gli estremi
+        #From curve generating point prompts at both sides
         savol_array_left = savol_array.copy()
-        savol_array_right = savol_array.copy()
         savol_array_expanded = []
         savol_array_expanded_negative = []
         for i in range(len(savol_array)):        #TODO per migliorare i point prompt, potrei mettere dei punti a label negativa a destra e sinistra
@@ -714,293 +256,64 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
         neg_labels = np.zeros(len(savol_array_expanded_negative))
         labels = np.concatenate((labels, neg_labels))
 
-    #Diplaying points
-    #IMAGE_COPY = image_source.copy()
-    #i = 0
-    #for p in points:
-    #    cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (0, 255, 0), thickness=2)
-    #    i = i + 1
-    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    #cv2.waitKey(0)
-
     return points, labels
 
-def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera precedente
-    #FIXME operazione and tra le maschere
-    # Rimuovo i buchi dalla maschera e la rendo più precisa e geometrica
-    cmap = plt.get_cmap("tab10")
-    cmap_idx = 1
-    color = np.array([*cmap(cmap_idx + 1)[:3], 0.6])
+def smooth_curve_from_points(rail_points_x, rail_points_y):
+    rail_points_x = np.array(rail_points_x)
+    rail_points_y = np.array(rail_points_y)
+    coeffs = np.polyfit(rail_points_y, rail_points_x, deg=3)  # Polinomio di grado 3
+    poly = np.poly1d(coeffs)
+    # Definizione di un intervallo più fitto per la curva
+    y_smooth = np.linspace(rail_points_y.min(), rail_points_y.max(), 200)
+    x_fit = poly(y_smooth)
+    xy_array = np.column_stack((x_fit, y_smooth))
+    return xy_array
+
+
+def refine_mask(mask, previous_mask=None):
     h, w = mask.shape[-2:]
-    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1,-1)
-
-    h, w = mask_image.shape[:2]  # your target image size
-    white_image = np.zeros((h, w), dtype=np.uint8)  # grayscale image (1 channel)
-
-    # Assume white_image has shape (H, W)
-    h, w = white_image.shape[:2]
+    black_image = np.zeros((h, w), dtype=np.uint8)
 
     # Convert your mask to uint8 and pad it properly
     mask = mask.astype('uint8')
 
+    #Somplifying image with blur and morphology, removing noise
     # FloodFill requires the mask to be (H+2, W+2)
     padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
     padded_mask[1:h + 1,
-    1:w + 1] = mask  # optional: copy into the center, or leave zeros
-    cv2.floodFill(white_image, padded_mask, (0, 0), 255)
-    white_image = cv2.bitwise_not(white_image)
-    #white_image = cv2.GaussianBlur(white_image, (101, 101), 0)
-
-    # convert to grayscale
-    #gray = cv2.cvtColor(white_image, cv2.COLOR_BGR2GRAY)
-    gray = white_image
+    1:w + 1] = mask
+    cv2.floodFill(black_image, padded_mask, (0, 0), 255)
+    black_and_white_mask_image = cv2.bitwise_not(black_image)
 
     # blur
-    blur = cv2.GaussianBlur(gray, (0, 0), sigmaX=3, sigmaY=3)
-
-    # divide
-    #divide = cv2.divide(gray, blur, scale=255)
-
+    blur = cv2.GaussianBlur(black_and_white_mask_image, (0, 0), sigmaX=3, sigmaY=3)
     # otsu threshold
     thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-
     # apply morphology
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
-    # display it
-    #cv2.imshow("gray", gray)
-    #cv2.imshow("divide", divide)
-    #cv2.imshow("thresh", thresh)
-    #cv2.imshow("morph", morph)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
-
-    white_image = np.zeros((h, w), dtype=np.uint8)  # grayscale image (1 channel)
+    #----------Cleaning and obtaining filled and crisp mask in BW----------
+    black_image = np.zeros((h, w), dtype=np.uint8)
     padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
     padded_mask[1:h + 1,
-    1:w + 1] = morph  # optional: copy into the center, or leave zeros
-    cv2.floodFill(white_image, padded_mask, (0, 0), 255)
-    white_image = cv2.bitwise_not(white_image)
-    '''
-    #TODO adesso rendere la maschera un "poligono" smussato
-    curve_left_rail = []
-    curve_right_rail = []
-    x_curve_left_rail = []
-    x_curve_right_rail = []
-    found_l = False
-    found_r = False
-    for j in range(h-1,0,-2):
-        i=0
-        while found_l == False or found_r == False:        #FIXME possibile loop infinito
-            if white_image[j][i] == 255:
-                if found_l:
-                    curve_right_rail.append([i, j])
-                    x_curve_right_rail.append(i)
-                    found_r = True
-                else:
-                    curve_left_rail.append([i, j])
-                    x_curve_left_rail.append(i)
-                    found_l = True
-                    i=w
-            if found_l:
-                i-=1
-            else:
-                i+=1
-            if i == w:
-                break
-            if i == -1:
-                break
-        found_l = False
-        found_r = False
-
-    xhat_right = savgol_filter(x_curve_right_rail, 5, 3)
-    xhat_left = savgol_filter(x_curve_left_rail, 5, 3)
-
-    savol_array = []
-    x_avg_array_filtered_left = np.array(xhat_left)
-    x_avg_array_filtered_right = np.array(xhat_right)
-    for i in range(len(x_curve_left_rail)):
-        savol_array.append([x_avg_array_filtered_left[i], curve_left_rail[i][1]])
-    for i in range(len(x_curve_right_rail)-1,0,-1):
-        savol_array.append([x_avg_array_filtered_right[i], curve_right_rail[i][1]])
-
-    curve = np.array(savol_array, dtype=np.float32)
-    curve = np.round(curve).astype(np.int32)
-
-    # Reshape for cv2.polylines: (N, 1, 2)
-    curve = curve.reshape((-1, 1, 2))
-
-    white_image = np.zeros_like(white_image)
-    # Draw the curve
-    cv2.polylines(white_image, [curve], isClosed=True, color=(255, 255, 255), thickness=4)
-
-    # Show image after savol filter
-    #cv2.imshow("Image with savol_array", white_image)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
-
-    # Diplaying points
-    #print(f"curve_left_rail: {curve_left_rail}")
-    #print(f"curve_right_rail: {curve_right_rail}")
-    #points = np.concatenate((curve_left_rail, curve_right_rail))
-    #IMAGE_COPY = np.zeros_like(mask_image)
-    #i = 0
-    #for p in points:
-    #   cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (0, 255, 0), thickness=1)
-    #   i = i + 1
-    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    #cv2.waitKey(0)
-
-    #TODO aggiungere il colore e la trasparenza
-    padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
-    padded_mask[1:h + 1,
-    1:w + 1] = white_image  # optional: copy into the center, or leave zeros
-    cv2.floodFill(white_image, padded_mask, (w//2,h-20), (255,255,255))     #FXIME il punto di flood va messo dentro il cerchio dei binari
-    #white_image = cv2.bitwise_not(white_image)
-    #TODO da aggiungere il passaggio della vecchia maschera cosi si può fare una media delle maschere
-
-    #FIXME non è stabile la maschra, soprattutto in anomaly detection il video di san donato
-    '''
-
-    #--perspective rectifing--------------------------
-    '''
-    tl_point = []
-    tr_point = []
-    bl_point = []
-    br_point = []
-    found_t=False
-    found_b=False
-    top_mask_found=False
-    bottom_mask_found=False
-    j=0
-
-    for j in range(h//2,h-1,1):
-        for i in range(w):
-            if white_image[j][i] == 255:
-                tl_point = [i, j]
-                break
-        if len(tl_point) > 0:
-            break
-    for j in range(h//2,h-1,1):
-        for i in range(w-1,0,-1):
-            if white_image[j][i] == 255:
-                tr_point = [i, j]
-                break
-        if len(tr_point) > 0:
-            break
-    for j in range(h-1,0,-1):
-        for i in range(w):
-            if white_image[j][i] == 255:
-                bl_point = [i, j]
-                break
-        if len(bl_point) > 0:
-            break
-    for j in range(h-1,0,-1):
-        for i in range(w-1,0,-1):
-            if white_image[j][i] == 255:
-                br_point = [i,j]
-                break
-        if len(br_point) > 0:
-            break
-
-
-
-    four_perspective_box_points = np.array([tl_point, tr_point, br_point, bl_point],dtype=np.float32)
-
-    # Diplaying points
-    IMAGE_COPY = white_image.copy()
-    i = 0
-    for p in four_perspective_box_points:
-       cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (255, 255, 255), thickness=10)
-       i = i + 1
-    cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    cv2.waitKey(0)
-
-    widthA = np.linalg.norm(br_point[0] - bl_point[0])
-    widthB = np.linalg.norm(tr_point[0] - tl_point[0])
-    maxWidth = int(max(widthA, widthB))
-
-    heightA = np.linalg.norm(tr_point[1] - br_point[1])
-    heightB = np.linalg.norm(tl_point[1] - bl_point[1])
-    maxHeight = int(max(heightA, heightB))
-
-    dst_pts = np.array([
-        [0, 0],
-        [maxWidth - 1, 0],
-        [maxWidth - 1, maxHeight - 1],
-        [0, maxHeight - 1]
-    ], dtype="float32")
-
-    # Step 7: Get the perspective transform matrix
-    M = cv2.getPerspectiveTransform(four_perspective_box_points, dst_pts)
-
-    # Step 8: Warp the image
-    warped = cv2.warpPerspective(white_image, M, (maxWidth, maxHeight))
-
-    # Show or save result
-    cv2.imshow("Warped", warped)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-    '''
+    1:w + 1] = morph
+    cv2.floodFill(black_image, padded_mask, (0, 0), 255)
+    black_and_white_mask_image = cv2.bitwise_not(black_image)
     #----------------checking old mask------------
-    #TODO fare una "media" delle due maschere
-
-    #TODO potrei blurrarle e sovrapporle e trovare i valori vicini a 255
-    # blur
-
     if previous_mask is not None:
-        #previous_mask_image = previous_mask.astype('uint8')
         previous_mask_image = previous_mask*255
-        previous_mask_image = previous_mask_image.astype(white_image.dtype)
-        '''
-        previous_blur=cv2.GaussianBlur(previous_mask_image, (0, 0), sigmaX=7, sigmaY=7)
-        # otsu threshold
-        previous_thresh = cv2.threshold(previous_blur, 0, 127, cv2.THRESH_BINARY)[1]
+        previous_mask_image = previous_mask_image.astype(black_and_white_mask_image.dtype)
 
-        blur = cv2.GaussianBlur(white_image, (0, 0), sigmaX=7, sigmaY=7)
-        # otsu threshold
-        thresh = cv2.threshold(blur, 0, 127, cv2.THRESH_BINARY)[1]
-
-        result = cv2.addWeighted(previous_thresh, 1, thresh, 1, 0)
-        # setting alpha=1, beta=1, gamma=0 gives direct overlay of two images
-
-        result = cv2.threshold(result, 128, 255, cv2.THRESH_BINARY)[1]
-        white_image = result
-        '''
-
-        inter = cv2.bitwise_and(white_image, previous_mask_image)
-        union = cv2.bitwise_or(white_image, previous_mask_image)
-        stable_mask = cv2.addWeighted(inter, 0.90, union, 0.10, 0)      #FIXME se favorisco la union è ,meglio ma si trascina dietro gli eccessi, con la intersect è più stretto
-        stable_mask = cv2.threshold(stable_mask, 0, 255, cv2.THRESH_BINARY)[1]
-        #white_image = stable_mask
-
-
-    #TODO idea, posso fare un rettangolo in prospettiva e poi adattarlo ai punti della curva e avere il binario, percè io so per certo che la maschera deve finire alla base dell'immagine, e i contorni devono essere lineari
-
-    #TODO rimuovere le isole nella maschera (forse non ce ne è bisogno grazie all'intersezione)
-    #TODO ritaglare fuori gli eccessi (con intersezione non è del tutto essenziale)
-
-    contours, _ = cv2.findContours(white_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        print("Nessun contorno trovato.")
-        exit()
+    #Removing mask "islands"or other noise not connected to the main detected object
+    contours, _ = cv2.findContours(black_and_white_mask_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     main_contour = max(contours, key=cv2.contourArea)
     main_contour = main_contour[:, 0, :]  # Remove nesting
 
-    # Ordina per y (dall'alto verso il basso)
-    #main_contour = main_contour[np.argsort(main_contour[:, 1])]
-
-    # Spezza il contorno a metà
-    #half = len(main_contour) // 2
-    #left_side = main_contour[:half]
-    #right_side = main_contour[half:][::-1]  # inverti per mantenere ordine top→bottom
-
-    white = np.zeros_like(white_image)
-    #cv2.drawContours(white, [main_contour], -1, (255,255,255), thickness=2)
-    cv2.drawContours(white, [main_contour], -1, (255, 255, 255), 3)
-    cv2.fillPoly(white, pts=[main_contour], color=(255, 255, 255))          #Fully removed islands an not connected pieces of the mask
+    black_image = np.zeros_like(black_and_white_mask_image)
+    cv2.drawContours(black_image, [main_contour], -1, (255, 255, 255), 3)
+    cv2.fillPoly(black_image, pts=[main_contour], color=(255, 255, 255))
 
     lrail_p_x = []
     lrail_p_y = []
@@ -1011,10 +324,10 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
         left_x_temp_points = []
         right_x_temp_points = []
         while i<w:
-            if white[j][i]==255:
+            if black_image[j][i]==255:
                 left_x_temp_points.append(i)
                 i+=1
-                while i<w and white[j][i]==255:
+                while i<w and black_image[j][i]==255:
                     i+=1
                 right_x_temp_points.append(i-1)
             else:
@@ -1027,137 +340,49 @@ def refine_mask(mask, previous_mask=None):      #TODO aggiunfere la maschera pre
             rrail_p_x.append(right_x_temp_points.max())
             rrail_p_y.append(j)
 
-    IMAGE_COPY = np.zeros_like(white)
-    i = 0
-    right_rail_points = np.stack((rrail_p_x, rrail_p_y), axis=1)
-    left_rail_points = np.stack((lrail_p_x, lrail_p_y), axis=1)
-    #points = np.array(left_rail_points)
-    #points = np.concatenate((points, np.array(right_rail_points)))
-    #for p in right_rail_points:
-    #  cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 2, (255, 255, 255), thickness=4)
-    #  i = i + 1
-    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
+    xy_array_left_rail = smooth_curve_from_points(lrail_p_x, lrail_p_y)
 
-    #FIXME da mettere in un metodo
-    lrail_p_x = np.array(lrail_p_x)
-    lrail_p_y = np.array(lrail_p_y)
+    xy_array_right_rail = smooth_curve_from_points(rrail_p_x, rrail_p_y)
 
-    coeffs = np.polyfit(lrail_p_y, lrail_p_x, deg=3)  # Polinomio di grado 3
-    poly = np.poly1d(coeffs)
-
-    # Definizione di un intervallo più fitto per la curva
-    y_smooth = np.linspace(lrail_p_y.min(), lrail_p_y.max(), 200)
-    x_fit = poly(y_smooth)
-
-    xy_array = np.column_stack((x_fit, y_smooth))
-
-    #IMAGE_COPY = np.zeros_like(white)
-    #i = 0
-    #for p in xy_array:
-    #    cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (255, 255, 255), thickness=2)
-    #    i = i + 1
-    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
-
-    rrail_p_x = np.array(rrail_p_x)
-    rrail_p_y = np.array(rrail_p_y)
-
-    coeffs2 = np.polyfit(rrail_p_y, rrail_p_x, deg=3)  # Polinomio di grado 3
-    poly2 = np.poly1d(coeffs2)
-
-    # Definizione di un intervallo più fitto per la curva
-    y_smooth2 = np.linspace(rrail_p_y.min(), rrail_p_y.max(), 200)
-    x_fit2 = poly2(y_smooth2)
-
-    xy_array2 = np.column_stack((x_fit2, y_smooth2))
-
-    #IMAGE_COPY = np.zeros_like(white)
-    #i = 0
-    #for p in xy_array2:
-    #    cv2.circle(IMAGE_COPY, (int(p[0]), int(p[1])), 1, (255, 255, 255), thickness=2)
-    #    i = i + 1
-    #cv2.imshow("Visualizing POINTS", IMAGE_COPY)
-    #cv2.waitKey(0)
-    #cv2.destroyAllWindows()
-
-    xy_array2 = xy_array2[::-1]
-    poly_points = np.array(xy_array,dtype=np.int32)
-    poly_points = np.concatenate((poly_points, np.array(xy_array2,dtype=np.int32)))
+    xy_array_right_rail = xy_array_right_rail[::-1]
+    poly_points = np.array(xy_array_left_rail,dtype=np.int32)
+    poly_points = np.concatenate((poly_points, np.array(xy_array_right_rail,dtype=np.int32)))
     poly_points = poly_points.reshape((-1, 1, 2))
-    IMAGE_COPY = np.zeros_like(white)
-    cv2.polylines(IMAGE_COPY, [poly_points], isClosed=True, color=(255, 255, 255), thickness=2)
+    polygonal_mask = np.zeros_like(black_image)
+    cv2.polylines(polygonal_mask, [poly_points], isClosed=True, color=(255, 255, 255), thickness=2)
+    cv2.fillPoly(polygonal_mask, pts=[poly_points], color=(255, 255, 255))
 
-    #TODO fill poly e passarlo in return e veere che succede
-    cv2.fillPoly(IMAGE_COPY, pts=[poly_points], color=(255, 255, 255))
-
-    #TODO check se la nuova maschera differisce troppo dalla precedente, scartala e usa la vechchoa
     #FIXME da mettere in un metodo
-    #Idea intersezione, sottraazione e conto i pixel bianchi, poi faccio la percentuale
+    #Using past mask for compensation of great variations in the mask
     if previous_mask is not None:
-        intersection = cv2.bitwise_and(IMAGE_COPY, previous_mask_image)
-        result = cv2.bitwise_xor(intersection, IMAGE_COPY)
-        #cv2.imshow("Original", IMAGE_COPY)
-        #cv2.imshow("Old", previous_mask_image)
-        #cv2.imshow("Intersection", intersection)
-        #cv2.imshow("Result", result)
-        #cv2.waitKey(0)
-        #cv2.destroyAllWindows()
-
-        #Contare i binchi
+        intersection = cv2.bitwise_and(polygonal_mask, previous_mask_image)
+        result = cv2.bitwise_xor(intersection, polygonal_mask)
+        scan_height = int(3*h/4)    #Checking only the bottom part of the mask, wich is the part that sholud be the steadiest
+        #Intersected mask (difference between old and new mask) pixel counting
         white_px = 0
-        for j in range(h):
+        for j in range(scan_height,h):
             for i in range(w):
                 if result[j][i] == 255:
-                    white_px+=1
-        tot_px = h*w
-        difference_percentage = white_px/tot_px
-        print(f"difference_percentage: {difference_percentage}")
-        #if difference_percentage>0.03:
-            #IMAGE_COPY = previous_mask_image.copy()    #FIXME se cè cambio binari non funziona, da fare sta cosa solo se al di fuori della forma dei binari
-        #TODO calcolare la larghezza della maschera dei binari e se diminuisce vicino alla base dell'immagine, allora copio incollo il pezzo vecchio della maschera fino a dove avviene l'anomalia
-        critical_height = None
-        old_temp_width = 0
-        temp_width = 0
-        temp_left_point = []
-        temp_right_point = []
-        for j in range(0,h,5):
-            temp_left_point = 0
-            temp_right_point = 0
+                    white_px += 1
+        #Total old mask pixel counting
+        tot_px = 0
+        for j in range(scan_height,h):
             for i in range(w):
-                if result[j][i] == 255:
-                    temp_left_point=i
-                    while i<w and result[j][i]==255:
-                        i+=1
-                    temp_right_point=i-1
-                    temp_width=temp_right_point-temp_left_point
-                    break
-            print(f"temp_width: {temp_width}")
-            print(f"old_temp_width: {old_temp_width}")
-            if temp_width>=(old_temp_width*1.02):       #FIXME non funziona scatta subito
-                old_temp_width = temp_width
-            else:
-                critical_height = j
-                break
-
-        print("Criticall",critical_height,"---------------------------------------")
-        if critical_height!=None:
-            old_copy = previous_mask_image.copy()
-            #TODO tagliare la vecchia immagine dalla latezza in giu e incollarla sulla nuova immagine
-            for j in range(critical_height):
+                if previous_mask_image[j][i] == 255:
+                    tot_px += 1
+        difference_percentage = white_px / tot_px
+        if difference_percentage>0.05:      #Using old mask bottom part if the canche is too drastic
+            old_mask_copy = previous_mask_image.copy()
+            for j in range(scan_height):
                 for i in range(w):
-                    old_copy[j][i] = 0
-            cv2.imshow("Old", old_copy)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-            fixed_image = cv2.bitwise_or(IMAGE_COPY, old_copy)
-            IMAGE_COPY = fixed_image
-    #a = white.astype(bool)
-    a = IMAGE_COPY.astype(bool)
+                    old_mask_copy[j][i] = 0
+            fixed_image = cv2.bitwise_or(polygonal_mask, old_mask_copy)
+            polygonal_mask = fixed_image
+    #Expanding the mask at the edges for better coverage of the rails
+    blur = cv2.GaussianBlur(polygonal_mask, (0, 0), sigmaX=4, sigmaY=1)
+    thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY)[1]
+    a = thresh.astype(bool)
     return a
-    #return mask
 
 # main
 def main():
@@ -1670,7 +895,7 @@ def main():
             print(f"Frame processed in {processing_time:.2f}s")
 
             # Increment frame counter
-            frame_idx += 1
+            frame_idx += 1      #FIXME per refreshare la segmentazione di sam2 posso detectare il cambio dei binari con una IA e refreshare lì, invece che ogni 15 frame
 
             # Clear memory for next iteration
             #del inference_state

@@ -149,7 +149,7 @@ def main():
     #video_predictor = build_sam2_video_predictor(sam2_cfg_path, sam2_checkpoint, device=device)
 
     #FIXME da scrivere meglio
-    video_predictor_rails = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_t.yaml", "models/sam2.1/sam2.1_hiera_tiny.pt", device=device)
+    video_predictor_rails = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_s.yaml", "models/sam2.1/sam2.1_hiera_small.pt", device=device)
 
     # Load the GroundingDINO model
     groundingdino_checkpoint = config['groundingdino_checkpoint']
@@ -160,7 +160,7 @@ def main():
     TEXT_TRESHOLD = args.text_threshold
     #FIXME da scrivere meglio
     BACKGROUND_PROMPT = "one train track."
-    OBSTACLE_PROMPT = "all things. all humans."
+    OBSTACLE_PROMPT = "all things."
     BOX_TRESHOLD_RAILS = 0.25
     TEXT_TRESHOLD_RAILS = 0.15
     BOX_TRESHOLD_OBSTACLES = 0.22
@@ -359,6 +359,7 @@ def main():
 
                     # Store railway mask
                     last_masks_rails[ann_rail_id] = utility.refine_mask((out_mask_logits[0] > 0).cpu().numpy())
+                    #last_masks_rails[ann_rail_id] = (out_mask_logits[0] > 0).cpu().numpy()
 
                 # Add detected objects to tracking
                 for obj_point in all_obstacles_points:
@@ -479,6 +480,7 @@ def main():
             for i, obj_id in enumerate(out_obj_ids):
                 if obj_id == 1: #Fixme mettere se è la maschera binario
                     last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])  #FIXME non fa refine al binario ma solo a tutto il resto
+                    #last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
                 else:
                     last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 
@@ -616,6 +618,7 @@ def main():
                             for i, obj_id in enumerate(out_obj_ids):
                                 if obj_id == 1:
                                     last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])
+                                    #last_masks_rails[obj_id]=(out_mask_logits[i] > 0).cpu().numpy()
                                 else:
                                     last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 

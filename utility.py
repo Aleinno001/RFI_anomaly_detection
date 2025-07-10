@@ -820,25 +820,63 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
         savol_array_left = savol_array.copy()
         savol_array_expanded = []
         savol_array_expanded_negative = []
-        for i in range(len(savol_array)):        #TODO per migliorare i point prompt, potrei mettere dei punti a label negativa a destra e sinistra
+        for i in range(len(savol_array)):
             if i>0 and i<len(savol_array_left)-1 and (i%6) == 0:
                 #savol_array_expanded.append(savol_array[i])
                 current_y_in_rail_box = savol_array[i][1] - y
                 savol_array_expanded.append([savol_array[i][0]-int(current_y_in_rail_box*0.12), savol_array[i][1]])
                 savol_array_expanded.append([savol_array[i][0]+int(current_y_in_rail_box*0.12), savol_array[i][1]])
-                savol_array_expanded_negative.append([savol_array[i][0] - int(current_y_in_rail_box * 0.90), savol_array[i][1]])
-                savol_array_expanded_negative.append([savol_array[i][0] + int(current_y_in_rail_box * 0.90), savol_array[i][1]])
+                savol_array_expanded_negative.append([savol_array[i][0] - int(current_y_in_rail_box * 1), savol_array[i][1]])
+                savol_array_expanded_negative.append([savol_array[i][0] + int(current_y_in_rail_box * 1), savol_array[i][1]])
+        # TODO guardando le maschere degli oggetti detectati e metto i punti negativi su di loro, e devo controllare che quelli verdi che hp messo non siano in essi
+
+        #Removing positive points that are inside a detected object and adding negative points for the same objects
+        for obj_id, mask in rails_masks.items():
+            if obj_id != 1:
+                h, w = mask.shape[-2:]
+                binary_mask = mask.reshape(h, w).astype(np.uint8)
+
+                color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
+                temp_mask_image = binary_mask[..., None] * color.reshape(1, 1, -1)
+
+                for p in savol_array_expanded[:]:  # Usa copia per evitare problemi di modifica durante iterazione
+                    if temp_mask_image[int(p[1]), int(p[0])].sum() > 0:
+                        savol_array_expanded.remove(p)
+
+                M = cv2.moments(binary_mask)
+
+                if M["m00"] != 0:
+                    cX = int(M["m10"] / M["m00"])
+                    cY = int(M["m01"] / M["m00"])
+                    center = (cX, cY)
+                    savol_array_expanded_negative.append(center)
+                else:
+                    print(f"No detected area in object mask = {obj_id}")
+
+
         points = np.array(np.concatenate((savol_array_expanded, savol_array_expanded_negative)))
         labels = np.ones(len(savol_array_expanded))
         neg_labels = np.zeros(len(savol_array_expanded_negative))
         labels = np.concatenate((labels, neg_labels))
+
+        #image_copy = image_source.copy()
+        #for i, p in enumerate(points):
+        #    if i<len(savol_array_expanded):
+        #        cv2.circle(image_copy, (int(p[0]), int(p[1])), 3, (0, 255, 0), -1)
+        #
+        #    else:
+        #        cv2.circle(image_copy, (int(p[0]), int(p[1])), 3, (0, 0, 255), -1)
+        #cv2.imshow("image_copy", image_copy)
+        #cv2.waitKey(0)
+        #cv2.destroyAllWindows()
+        #FIXME rimuovo lo show image
 
     return points, labels
 
 def smooth_curve_from_points(rail_points_x, rail_points_y):
     rail_points_x = np.array(rail_points_x)
     rail_points_y = np.array(rail_points_y)
-    coeffs = np.polyfit(rail_points_y, rail_points_x, deg=3)  # Polinomio di grado 3
+    coeffs = np.polyfit(rail_points_y, rail_points_x, deg=4)  # Polinomio di grado 3    #FIXME da decidere il grado più appropriato
     poly = np.poly1d(coeffs)
     # Definizione di un intervallo più fitto per la curva
     y_smooth = np.linspace(rail_points_y.min(), rail_points_y.max(), 200)
@@ -964,6 +1002,7 @@ def refine_mask(mask, previous_mask=None):
 def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggetto poggiato sul terreno e cambiare il coolore in base alla vicinanza al binario
     mask = np.array(mask, dtype=np.uint8)
     mask = mask.squeeze()
+    #TODO da blurrare le maschere degli oggetti cosi si detecta meglio il pericolo se non si toccano
     rail_mask = np.array(rail_mask, dtype=np.uint8)
     rail_mask = rail_mask.squeeze()
     intersection = cv2.bitwise_and(mask, rail_mask)
@@ -972,7 +1011,6 @@ def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggett
     else:
         color = np.array([234 / 255, 255 / 255, 0 / 255, 0.5])
     h, w = mask.shape[-2:]
-    #mask = mask.astype(np.uint8)
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     # Try to smooth contours

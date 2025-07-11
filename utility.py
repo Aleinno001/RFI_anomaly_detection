@@ -849,23 +849,23 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
                     cX = int(M["m10"] / M["m00"])
                     cY = int(M["m01"] / M["m00"])
                     center = (cX, cY)
-                    savol_array_expanded_negative.append(center)
+                    #savol_array_expanded_negative.append(center) #FIXME non so perchè ma questa cosa dei punti modificati non fa funzionare (forze lo toglierei questa aggiunta dei punti negativi)
                 else:
                     print(f"No detected area in object mask = {obj_id}")
 
 
-        points = np.array(np.concatenate((savol_array_expanded, savol_array_expanded_negative)))
+        points = np.array(np.concatenate((savol_array_expanded, savol_array_expanded_negative)))    #FIXME se detecto un oggetto che è il binario stesso poi faccio il pop di tutti i punti verdi nel binario ed esplode
         labels = np.ones(len(savol_array_expanded))
         neg_labels = np.zeros(len(savol_array_expanded_negative))
         labels = np.concatenate((labels, neg_labels))
 
-        #image_copy = image_source.copy()
-        #for i, p in enumerate(points):
-        #    if i<len(savol_array_expanded):
-        #        cv2.circle(image_copy, (int(p[0]), int(p[1])), 3, (0, 255, 0), -1)
-        #
-        #    else:
-        #        cv2.circle(image_copy, (int(p[0]), int(p[1])), 3, (0, 0, 255), -1)
+        image_copy = image_source.copy()
+        for i, p in enumerate(points):
+            if i<len(savol_array_expanded):
+                cv2.circle(image_copy, (int(p[0]), int(p[1])), 3, (0, 255, 0), -1)
+
+            else:
+                cv2.circle(image_copy, (int(p[0]), int(p[1])), 3, (0, 0, 255), -1)
         #cv2.imshow("image_copy", image_copy)
         #cv2.waitKey(0)
         #cv2.destroyAllWindows()
@@ -876,7 +876,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
 def smooth_curve_from_points(rail_points_x, rail_points_y):
     rail_points_x = np.array(rail_points_x)
     rail_points_y = np.array(rail_points_y)
-    coeffs = np.polyfit(rail_points_y, rail_points_x, deg=4)  # Polinomio di grado 3    #FIXME da decidere il grado più appropriato
+    coeffs = np.polyfit(rail_points_y, rail_points_x, deg=5)  # Polinomio di grado 3    #FIXME da decidere il grado più appropriato
     poly = np.poly1d(coeffs)
     # Definizione di un intervallo più fitto per la curva
     y_smooth = np.linspace(rail_points_y.min(), rail_points_y.max(), 200)
@@ -892,7 +892,7 @@ def refine_mask(mask, previous_mask=None):
     # Convert your mask to uint8 and pad it properly
     mask = mask.astype('uint8')
 
-    #Somplifying image with blur and morphology, removing noise
+    #Simplifying image with blur and morphology, removing noise
     # FloodFill requires the mask to be (H+2, W+2)
     padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
     padded_mask[1:h + 1,
@@ -900,10 +900,29 @@ def refine_mask(mask, previous_mask=None):
     cv2.floodFill(black_image, padded_mask, (0, 0), 255)
     black_and_white_mask_image = cv2.bitwise_not(black_image)
 
+    #Approccio più semplice
+
+    # blur
+    blur = cv2.GaussianBlur(black_and_white_mask_image, (0, 0), sigmaX=4, sigmaY=2)
+    # otsu threshold
+    thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY)[1]
+
+    # Removing mask "islands"or other noise not connected to the main detected object
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    main_contour = max(contours, key=cv2.contourArea)
+    main_contour = main_contour[:, 0, :]  # Remove nesting
+
+    black_image = np.zeros_like(black_and_white_mask_image)
+    cv2.drawContours(black_image, [main_contour], -1, (255, 255, 255), 3)
+    cv2.fillPoly(black_image, pts=[main_contour], color=(255, 255, 255))
+
+    '''
     # blur
     blur = cv2.GaussianBlur(black_and_white_mask_image, (0, 0), sigmaX=3, sigmaY=3)
     # otsu threshold
     thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
+    
     # apply morphology
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
@@ -996,10 +1015,12 @@ def refine_mask(mask, previous_mask=None):
     #Expanding the mask at the edges for better coverage of the rails
     blur = cv2.GaussianBlur(polygonal_mask, (0, 0), sigmaX=4, sigmaY=1)
     thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY)[1]
-    a = thresh.astype(bool)
+    '''
+    a = black_image.astype(bool)
     return a
 
 def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggetto poggiato sul terreno e cambiare il coolore in base alla vicinanza al binario
+     #FIXME infatti se per esempio una persona è in piedi accanto ai binari ma è alta e il binario cirva in lontananza dietro la persona diventa arancione ma non è giusto
     mask = np.array(mask, dtype=np.uint8)
     mask = mask.squeeze()
     #TODO da blurrare le maschere degli oggetti cosi si detecta meglio il pericolo se non si toccano

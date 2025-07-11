@@ -149,7 +149,7 @@ def main():
     #video_predictor = build_sam2_video_predictor(sam2_cfg_path, sam2_checkpoint, device=device)
 
     #FIXME da scrivere meglio
-    video_predictor_rails = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_s.yaml", "models/sam2.1/sam2.1_hiera_small.pt", device=device)
+    video_predictor_rails = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_t.yaml", "models/sam2.1/sam2.1_hiera_tiny.pt", device=device)
 
     # Load the GroundingDINO model
     groundingdino_checkpoint = config['groundingdino_checkpoint']
@@ -345,7 +345,6 @@ def main():
 
                 # Add railway to tracking
                 if main_railway_box is not None:
-                    #points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
                     points, labels = utility.extract_main_internal_railway_points_and_labels(frame_rgb, main_railway_box,last_masks_rails)
 
                     _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(      #TODO la maschera generata andrebbe espandsa dai lati per includere i binari e contorni, magari anche blurrarla
@@ -435,7 +434,6 @@ def main():
                         # Add object using its center point
                         # Special handling for railway (can use box instead of point)
                         if obj_id == 1 and main_railway_box is not None:
-                            #points, labels = extract_main_railway_points_and_labels(frame_rgb, main_railway_box,frame_idx)
                             points, labels = utility.extract_main_internal_railway_points_and_labels(frame_rgb,main_railway_box,last_masks_rails)
                             _, _, _ = video_predictor_rails.add_new_points_or_box(
                                 inference_state=inference_state_rails,

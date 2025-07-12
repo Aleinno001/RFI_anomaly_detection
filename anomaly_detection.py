@@ -160,11 +160,11 @@ def main():
     TEXT_TRESHOLD = args.text_threshold
     #FIXME da scrivere meglio
     BACKGROUND_PROMPT = "one train track."
-    OBSTACLE_PROMPT = "all things."
+    OBSTACLE_PROMPT = "all things. all humans"
     BOX_TRESHOLD_RAILS = 0.25
     TEXT_TRESHOLD_RAILS = 0.15
-    BOX_TRESHOLD_OBSTACLES = 0.22
-    TEXT_TRESHOLD_OBSTACLES = 0.10
+    BOX_TRESHOLD_OBSTACLES = 0.25
+    TEXT_TRESHOLD_OBSTACLES = 0.70
 
     print(f"Loaded SAM2 model from {sam2_checkpoint}")
     print(f"Loaded GroundingDINO model from {groundingdino_checkpoint}")

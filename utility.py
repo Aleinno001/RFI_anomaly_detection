@@ -1026,7 +1026,9 @@ def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggett
     #TODO da blurrare le maschere degli oggetti cosi si detecta meglio il pericolo se non si toccano
     rail_mask = np.array(rail_mask, dtype=np.uint8)
     rail_mask = rail_mask.squeeze()
-    intersection = cv2.bitwise_and(mask, rail_mask)
+    blurred_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=5, sigmaY=5)
+    binary_mask =cv2.threshold(blurred_mask, 0, 255, cv2.THRESH_BINARY)[1]
+    intersection = cv2.bitwise_and(binary_mask, rail_mask)
     if intersection.sum()>0:
         color = np.array([255 / 255, 136 / 255, 0 / 255, 0.5])
     else:

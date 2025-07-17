@@ -703,13 +703,38 @@ def is_mask_in_box(mask, box, margin=10):
 
     return mask_in_box
 
+def extract_ground_points_and_labels(image_source, ground_gd_box):
+    points = []
+    width = image_source.shape[1]
+    height = image_source.shape[0]
+    gd_width = int(ground_gd_box[2] - ground_gd_box[0])
+    gd_height = int(ground_gd_box[3] - ground_gd_box[1])
+    x = int(ground_gd_box[0])
+    y = int(ground_gd_box[1])
+
+    for j in range(y+gd_height-10, y+60, -120):
+        for i in range(x+10,x+gd_width-10,120):
+            points.append([i,j])
+
+    labels = np.ones(len(points))
+
+    IMAGE_COPY = image_source.copy()
+    for point in points:
+        cv2.circle(IMAGE_COPY, (point[0], point[1]), 5, (0, 0, 255), -1)
+    cv2.imshow("Image", IMAGE_COPY)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    return points, labels
+
+
+
 def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):
     #Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
 
     width = image_source.shape[1]
     height = image_source.shape[0]
     gd_width = gd_box[2]-gd_box[0]
-    x = gd_box[0]
 
     # -----------------CANNY EDGES--------------------
     image_cropped = image_source[int(gd_box[1]):int(gd_box[3]), int(gd_box[0]):int(gd_box[2])]
@@ -750,10 +775,11 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     #Getting only the rail detection mask
     #TODO visto che ho accesso alle maschere, devo mette i punti rossi dentro gli stacoli e i punti verdi toglierli se dentro le maschere
     for obj_id, mask in rails_masks.items():
-        h, w = mask.shape[-2:]
-        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
-        mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-        break
+        if obj_id == 1:
+            h, w = mask.shape[-2:]
+            color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
+            mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+            break
 
     # ----------------Extracting some points from mask -------------------
     # Creating a black image with only the curves of the mask
@@ -832,7 +858,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
 
         #Removing positive points that are inside a detected object and adding negative points for the same objects
         for obj_id, mask in rails_masks.items():
-            if obj_id != 1:
+            if obj_id != 1 and obj_id!= 0:
                 h, w = mask.shape[-2:]
                 binary_mask = mask.reshape(h, w).astype(np.uint8)
 
@@ -853,7 +879,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
                 else:
                     print(f"No detected area in object mask = {obj_id}")
 
-
+        #FIXME controllare che ci siano punti verdi, è possibile che non ci siano, quindi usare la maschera calcolata precedentemente
         points = np.array(np.concatenate((savol_array_expanded, savol_array_expanded_negative)))    #FIXME se detecto un oggetto che è il binario stesso poi faccio il pop di tutti i punti verdi nel binario ed esplode
         labels = np.ones(len(savol_array_expanded))
         neg_labels = np.zeros(len(savol_array_expanded_negative))
@@ -1040,3 +1066,45 @@ def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggett
     contours = [cv2.approxPolyDP(contour, epsilon=0.01, closed=True) for contour in contours]
     mask_image = cv2.drawContours(mask_image, contours, -1, (1, 1, 1, 0.5), thickness=3)
     ax.imshow(mask_image)
+
+def is_point_inside_box(point, box):
+    x_min = int(box[0])
+    x_max = int(box[2])
+    y_min = int(box[1])
+    y_max = int(box[3])
+    if x_min<point[0]<x_max and y_min<point[1]<y_max:
+        return True
+    else:
+        return False
+
+def is_mask_an_obstacle(mask, rail_mask, railway_box):
+    result = True
+    mask = np.array(mask, dtype=np.uint8)
+    mask = mask.squeeze()
+    rail_mask = np.array(rail_mask, dtype=np.uint8)
+    rail_mask = rail_mask.squeeze()
+    blurred_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=5, sigmaY=5)
+    binary_mask =cv2.threshold(blurred_mask, 0, 255, cv2.THRESH_BINARY)[1]
+    intersection = cv2.bitwise_and(binary_mask, rail_mask)
+    intersected_px_count = intersection.sum()
+    railway_px_count = rail_mask.sum()
+    if intersected_px_count/railway_px_count>0.75:
+        result = False
+    if railway_box is not None:
+        count = 0
+        top_limit = None
+        h,w = mask.shape[-2:]
+        for j in range(h):
+            for i in range(w):
+                if binary_mask[j][i] == 255:
+                    if count == 0:
+                        top_limit = j
+                    count += 1
+                    break
+        if top_limit is not None:
+            mask_height = count
+            rail_height = railway_box[3]-railway_box[1]
+            print(railway_box[1])
+            if (railway_box[1]*0.8)<=top_limit<=(railway_box[1]*1.3) and (rail_height*0.8)<=mask_height<=(rail_height*1.3):
+                result = False
+    return result

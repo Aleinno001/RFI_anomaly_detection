@@ -159,12 +159,15 @@ def main():
     BOX_TRESHOLD = args.box_threshold
     TEXT_TRESHOLD = args.text_threshold
     #FIXME da scrivere meglio
-    BACKGROUND_PROMPT = "one train track."
-    OBSTACLE_PROMPT = "all things. all humans"
+    RAILWAY_PROMPT = "one train track."
+    OBSTACLE_PROMPT = "all things. all humans."
+    GROUND_PROMPT = "all railway ballast."
     BOX_TRESHOLD_RAILS = 0.25
     TEXT_TRESHOLD_RAILS = 0.15
-    BOX_TRESHOLD_OBSTACLES = 0.25
-    TEXT_TRESHOLD_OBSTACLES = 0.70
+    BOX_TRESHOLD_OBSTACLES = 0.25   #25
+    TEXT_TRESHOLD_OBSTACLES = 0.70  #70
+    BOX_TRESHOLD_GROUND = 0.30
+    TEXT_TRESHOLD_GROUND = 0.30
 
     print(f"Loaded SAM2 model from {sam2_checkpoint}")
     print(f"Loaded GroundingDINO model from {groundingdino_checkpoint}")
@@ -190,7 +193,7 @@ def main():
     # Object tracking variables
     ann_obj_id = 1  # Object ID counter
     ann_all_obj_id = 1
-    ann_rail_id = 1
+    ann_rail_id = 0 #FIXME da rimettere ad 1 nel caso in cui tolgo il ground
     last_masks = {}  # Store the last known mask for each object
     last_masks_rails = {}  # Store the last known mask for each object
     last_masks_obstacles = {}  # Store the last known mask for each object
@@ -199,6 +202,7 @@ def main():
     frame_idx = 0
     railway_box = None  # Store railway box for future reference
     main_railway_box = None
+    ground_box = None
 
     test = 0
 
@@ -232,6 +236,7 @@ def main():
 
             # Process based on frame index
             if frame_idx == 0:
+
                 '''
                 # First frame: detect railway and objects with Grounding DINO
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
@@ -280,10 +285,23 @@ def main():
                     idx = list(out_obj_ids).index(ann_obj_id) if ann_obj_id in out_obj_ids else 0
                     last_masks[ann_obj_id] = (out_mask_logits[idx] > 0).cpu().numpy()
                 '''
+                #DETECTION OF THE GROUND
+                dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
+                    frame_path, groundingdino, GROUND_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_GROUND,
+                    TEXT_TRESHOLD=TEXT_TRESHOLD_GROUND, show=False,
+                )
+
+                max_score_railway = 0
+                for i, box in enumerate(dino_boxes):
+                 if dino_scores[i] > max_score_railway:
+                        ground_box = box
+                        max_score_railway = dino_scores[i]
+
+
 
                 #DETECTION OF THE MAIN RAILWAY AND THE OBSTACLES
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
-                    frame_path, groundingdino, BACKGROUND_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
+                    frame_path, groundingdino, RAILWAY_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
                     TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
                 )#TODO Rimuovere lo show=True
 
@@ -341,8 +359,9 @@ def main():
                     x_min, y_min, x_max, y_max = box
                     all_obstacles_points.append([(x_min + x_max) // 2, (y_min + y_max) // 2])
 
-                print(f"Found main railway: {main_railway_box is not None}, all obstacles: {len(all_obstacles_points)}")
+                print(f"Found ground: {ground_box is not None}, Found main railway: {main_railway_box is not None}, all obstacles: {len(all_obstacles_points)}")
 
+                ann_rail_id += 1
                 # Add railway to tracking
                 if main_railway_box is not None:
                     points, labels = utility.extract_main_internal_railway_points_and_labels(frame_rgb, main_railway_box,last_masks_rails)
@@ -362,18 +381,24 @@ def main():
 
                 # Add detected objects to tracking
                 for obj_point in all_obstacles_points:
-                    ann_rail_id += 1
-                    _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
-                        inference_state=inference_state_rails,
-                        frame_idx=0,
-                        obj_id=ann_rail_id,
-                        points=[obj_point],
-                        labels=np.array([1], np.int32),
-                    )
+                    if utility.is_point_inside_box(obj_point, ground_box):
+                        ann_rail_id += 1
+                        _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
+                            inference_state=inference_state_rails,
+                            frame_idx=0,
+                            obj_id=ann_rail_id,
+                            points=[obj_point],
+                            labels=np.array([1], np.int32),
+                        )
 
-                    # Store object mask
-                    idx = list(out_obj_ids).index(ann_rail_id) if ann_rail_id in out_obj_ids else 0
-                    last_masks_rails[ann_rail_id] = (out_mask_logits[idx] > 0).cpu().numpy()
+                        # Store object mask
+                        idx = list(out_obj_ids).index(ann_rail_id) if ann_rail_id in out_obj_ids else 0
+                        temp_mask = (out_mask_logits[idx] > 0).cpu().numpy()
+                        if utility.is_mask_an_obstacle(temp_mask, last_masks_rails[1],main_railway_box):
+                            last_masks_rails[ann_rail_id] = temp_mask
+                        else:
+                            video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)     #TODO da aggiungere dove voglio togliere il tracking di oggetti sbagliati
+                            print(f"Removed obstacle {ann_rail_id} because it was not an obstacle")
 
 
             else:
@@ -465,7 +490,8 @@ def main():
                 last_masks[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
             '''
 
-            #FIXME da scrivere meglio
+            #TODO vedi di fare come sotto però per il ground
+
             # Propagate all objects in current frame
             result_rails = next(video_predictor_rails.propagate_in_video(
                 inference_state_rails,
@@ -537,9 +563,23 @@ def main():
                             for i, obj_id in enumerate(out_obj_ids):
                                 last_masks[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
                 '''
-                # DETECTION OF THE MAIN RAILWAY AND THE OBSTACLES
+                # DETECTION OF THE GROUND
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
-                    frame_path, groundingdino, BACKGROUND_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
+                    frame_path, groundingdino, GROUND_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_GROUND,
+                    TEXT_TRESHOLD=TEXT_TRESHOLD_GROUND, show=False,
+                )
+
+                max_score_railway = 0
+                for i, box in enumerate(dino_boxes):
+                    if dino_scores[i] > max_score_railway:
+                        ground_box = box
+                        max_score_railway = dino_scores[i]
+
+
+
+                # DETECTION OF THE MAIN RAILWAY AND THE OBSTACLES   #TODO da mettere in un metodo perchè viene fatto lo stesso codice più in alto
+                dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
+                    frame_path, groundingdino, RAILWAY_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
                     TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
                 )  # TODO Rimuovere lo show=true
                 # TODO tra le bounding box togliere quelle che sono troppo grosse
@@ -568,7 +608,7 @@ def main():
 
                 # Check each detected object
                 for i, phrase in enumerate(phrases):
-                    if phrases[i] == 'all things': #TODO gestire la rail separata
+                    if phrases[i] == 'all things' or phrases[i]=="all humans": #TODO gestire la rail separata, verificare che il obstacle prompt vada bene mettere più frasi così
                         x_min, y_min, x_max, y_max = dino_boxes[i]
                         center_x = (x_min + x_max) // 2
                         center_y = (y_min + y_max) // 2
@@ -592,8 +632,8 @@ def main():
                                 break
 
 
-                        # Add new object if not already tracked
-                        if not already_tracked:
+                        # Add new object if not already tracked and is inside the railway area
+                        if (not already_tracked) and utility.is_point_inside_box( [center_x,center_y],main_railway_box):
                             ann_rail_id += 1
                             print(f"New object {ann_rail_id} detected at frame {frame_idx}")
 
@@ -604,6 +644,9 @@ def main():
                                 points=[[center_x, center_y]],
                                 labels=np.array([1], np.int32),
                             )
+
+                            if not utility.is_mask_an_obstacle((out_mask_logits[i] > 0).cpu().numpy(), last_masks_rails[1],main_railway_box):
+                                video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)
 
                             # Re-propagate with the new object
                             result_rails = next(video_predictor_rails.propagate_in_video(
@@ -620,6 +663,27 @@ def main():
                                 else:
                                     last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 
+            #Removal of tracked masks that probably are not obstacles, but the same railway or other geometries in the image
+            for obj_id, mask in last_masks_rails.items():
+                if not utility.is_mask_an_obstacle(mask, last_masks_rails[1], main_railway_box) and obj_id!=1:
+                    video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)
+
+                    # Re-propagate with the new object
+                    result_rails = next(video_predictor_rails.propagate_in_video(
+                        inference_state_rails,
+                        start_frame_idx=0
+                    ))
+                    _, out_obj_ids, out_mask_logits = result_rails
+
+                    # Update masks dictionary
+                    for i, obj_id in enumerate(out_obj_ids):
+                        if obj_id == 1:
+                            last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[i] > 0).cpu().numpy(),
+                                                                           last_masks_rails[obj_id])
+                            # last_masks_rails[obj_id]=(out_mask_logits[i] > 0).cpu().numpy()
+                        else:
+                            last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
+
             # Create visualization
             plt.figure(figsize=(8, 6))
             plt.imshow(frame_rgb)
@@ -627,17 +691,17 @@ def main():
             for obj_id, mask in last_masks_rails.items():
                 #utility.show_mask_v(mask, plt.gca(), obj_id=obj_id)
                 #TODO mettere metodo che evidenzia i pericoli
-                if obj_id != 1:
+                if obj_id != 1 and obj_id != 0:
                     utility.show_anomalies(mask,plt.gca(),rail_mask)
                 else:
                     utility.show_mask_v(mask, plt.gca(), obj_id=obj_id)
                     rail_mask = mask
-            if args.show_frames:  # show the plt image using OpenCV
+            if False:  # show the plt image using OpenCV     args.show_frames
                 cv2.imshow("Processed video frame", utility.plt_figure_to_cv2( plt.gcf()))
                 key = cv2.waitKey(1)
                 if key == ord('q'):
                     raise KeyboardInterrupt
-            if args.save_frames:  #to remove True in args.save_frames
+            if True:  #to remove True in args.save_frames
                 plt.savefig(os.path.join(args.output_path, f"frame_{frame_idx:06d}.jpg"))
             plt.close()
 

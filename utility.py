@@ -1068,16 +1068,16 @@ def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggett
     ax.imshow(mask_image)
 
 def is_point_inside_box(point, box):
-    x_min = int(box[0])
-    x_max = int(box[2])
     y_min = int(box[1])
     y_max = int(box[3])
-    if x_min<point[0]<x_max and y_min<point[1]<y_max:
-        return True
+    result = True
+    if y_min<point[1]<y_max:       #FIXME la box del terreno non è ancora affidabile, potrei controllare solo la quota e non orizzontalmente
+        result = True
     else:
-        return False
+        result = False
+    return result
 
-def is_mask_an_obstacle(mask, rail_mask, railway_box):
+def is_mask_an_obstacle(mask, rail_mask, railway_box):      #FIXME se un oggetto è in prospettiva grosso allora viene tolto, sbagliato
     result = True
     mask = np.array(mask, dtype=np.uint8)
     mask = mask.squeeze()
@@ -1086,25 +1086,29 @@ def is_mask_an_obstacle(mask, rail_mask, railway_box):
     blurred_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=5, sigmaY=5)
     binary_mask =cv2.threshold(blurred_mask, 0, 255, cv2.THRESH_BINARY)[1]
     intersection = cv2.bitwise_and(binary_mask, rail_mask)
-    intersected_px_count = intersection.sum()
+    intersected_rail_px_count = intersection.sum()
     railway_px_count = rail_mask.sum()
-    if intersected_px_count/railway_px_count>0.75:
+    if intersected_rail_px_count/railway_px_count>0.75:
         result = False
-    if railway_box is not None:
-        count = 0
-        top_limit = None
-        h,w = mask.shape[-2:]
-        for j in range(h):
-            for i in range(w):
-                if binary_mask[j][i] == 255:
-                    if count == 0:
-                        top_limit = j
-                    count += 1
-                    break
-        if top_limit is not None:
-            mask_height = count
-            rail_height = railway_box[3]-railway_box[1]
-            print(railway_box[1])
-            if (railway_box[1]*0.8)<=top_limit<=(railway_box[1]*1.3) and (rail_height*0.8)<=mask_height<=(rail_height*1.3):
-                result = False
+
+    x_min = int(railway_box[0])
+    x_max = int(railway_box[2])
+    y_min = int(railway_box[1])
+    y_max = int(railway_box[3])
+    width = mask.shape[1]
+
+    #TODO da togliere le maschere che non sono oggetti
+    black_image = np.zeros_like(mask)
+    railway_box_points = np.array([
+        [[x_min, y_min]],
+        [[x_max, y_min]],
+        [[x_max, y_max]],
+        [[x_min, y_max]]
+    ], dtype=np.int32)
+    cv2.fillPoly(black_image, pts=[railway_box_points], color=(255, 255, 255))
+    intersection = cv2.bitwise_and(black_image, blurred_mask)
+    mask_px_count = blurred_mask.sum()
+    intersected_mask_px_count = intersection.sum()
+    if intersected_mask_px_count/mask_px_count<0.5:
+        result = False
     return result

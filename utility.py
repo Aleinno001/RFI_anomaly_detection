@@ -869,33 +869,13 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
                     if temp_mask_image[int(p[1]), int(p[0])].sum() > 0:
                         savol_array_expanded.remove(p)
 
-                M = cv2.moments(binary_mask)
 
-                if M["m00"] != 0:
-                    cX = int(M["m10"] / M["m00"])
-                    cY = int(M["m01"] / M["m00"])
-                    center = (cX, cY)
-                    #savol_array_expanded_negative.append(center) #FIXME non so perchè ma questa cosa dei punti modificati non fa funzionare (forze lo toglierei questa aggiunta dei punti negativi)
-                else:
-                    print(f"No detected area in object mask = {obj_id}")
 
         #FIXME controllare che ci siano punti verdi, è possibile che non ci siano, quindi usare la maschera calcolata precedentemente
         points = np.array(np.concatenate((savol_array_expanded, savol_array_expanded_negative)))    #FIXME se detecto un oggetto che è il binario stesso poi faccio il pop di tutti i punti verdi nel binario ed esplode
         labels = np.ones(len(savol_array_expanded))
         neg_labels = np.zeros(len(savol_array_expanded_negative))
         labels = np.concatenate((labels, neg_labels))
-
-        image_copy = image_source.copy()
-        for i, p in enumerate(points):
-            if i<len(savol_array_expanded):
-                cv2.circle(image_copy, (int(p[0]), int(p[1])), 3, (0, 255, 0), -1)
-
-            else:
-                cv2.circle(image_copy, (int(p[0]), int(p[1])), 3, (0, 0, 255), -1)
-        #cv2.imshow("image_copy", image_copy)
-        #cv2.waitKey(0)
-        #cv2.destroyAllWindows()
-        #FIXME rimuovo lo show image
 
     return points, labels
 
@@ -1052,8 +1032,9 @@ def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggett
     #TODO da blurrare le maschere degli oggetti cosi si detecta meglio il pericolo se non si toccano
     rail_mask = np.array(rail_mask, dtype=np.uint8)
     rail_mask = rail_mask.squeeze()
-    blurred_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=5, sigmaY=5)
-    binary_mask =cv2.threshold(blurred_mask, 0, 255, cv2.THRESH_BINARY)[1]
+    #Expanding mask to detect near objects to the rails
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    binary_mask = cv2.dilate(mask, kernel, iterations=5)
     intersection = cv2.bitwise_and(binary_mask, rail_mask)
     if intersection.sum()>0:
         color = np.array([255 / 255, 136 / 255, 0 / 255, 0.5])
@@ -1061,10 +1042,10 @@ def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggett
         color = np.array([234 / 255, 255 / 255, 0 / 255, 0.5])
     h, w = mask.shape[-2:]
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    #contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     # Try to smooth contours
-    contours = [cv2.approxPolyDP(contour, epsilon=0.01, closed=True) for contour in contours]
-    mask_image = cv2.drawContours(mask_image, contours, -1, (1, 1, 1, 0.5), thickness=3)
+    #contours = [cv2.approxPolyDP(contour, epsilon=0.01, closed=True) for contour in contours]
+    #mask_image = cv2.drawContours(mask_image, contours, -1, (1, 1, 1, 0.5), thickness=3)
     ax.imshow(mask_image)
 
 def is_point_inside_box(point, box):
@@ -1083,21 +1064,23 @@ def is_mask_an_obstacle(mask, rail_mask, railway_box):      #FIXME se un oggetto
     mask = mask.squeeze()
     rail_mask = np.array(rail_mask, dtype=np.uint8)
     rail_mask = rail_mask.squeeze()
-    blurred_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=5, sigmaY=5)
+    blurred_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=2, sigmaY=2)
     binary_mask =cv2.threshold(blurred_mask, 0, 255, cv2.THRESH_BINARY)[1]
     intersection = cv2.bitwise_and(binary_mask, rail_mask)
+    substraction = cv2.bitwise_xor(binary_mask, rail_mask)
     intersected_rail_px_count = intersection.sum()
+    substraction_rail_px_count = substraction.sum()
     railway_px_count = rail_mask.sum()
-    if intersected_rail_px_count/railway_px_count>0.75:
+    #Removes the masks that are inside the rail mask and too big, but not protruding, probably is the rail itself
+    if intersected_rail_px_count/railway_px_count>0.7 and substraction_rail_px_count<(0.05*railway_px_count):       #FIXME da verificare (non so come) che abbia la forma del binario
         result = False
 
     x_min = int(railway_box[0])
     x_max = int(railway_box[2])
     y_min = int(railway_box[1])
     y_max = int(railway_box[3])
-    width = mask.shape[1]
 
-    #TODO da togliere le maschere che non sono oggetti
+    #Removes the masks that are not inside the detected box of the entire railway
     black_image = np.zeros_like(mask)
     railway_box_points = np.array([
         [[x_min, y_min]],
@@ -1106,9 +1089,34 @@ def is_mask_an_obstacle(mask, rail_mask, railway_box):      #FIXME se un oggetto
         [[x_min, y_max]]
     ], dtype=np.int32)
     cv2.fillPoly(black_image, pts=[railway_box_points], color=(255, 255, 255))
-    intersection = cv2.bitwise_and(black_image, blurred_mask)
-    mask_px_count = blurred_mask.sum()
+    intersection = cv2.bitwise_and(black_image, binary_mask)
+    mask_px_count = binary_mask.sum()
     intersected_mask_px_count = intersection.sum()
     if intersected_mask_px_count/mask_px_count<0.5:
         result = False
+
+    #Check if mask is too small
+    mask_px_count = binary_mask.sum()
+    if mask_px_count<100:
+        result = False
+
+    return result
+
+def is_mask_duplicate(mask, obj_id, last_masks_rails):
+    result = False
+    mask = np.array(mask, dtype=np.uint8)
+    mask = mask.squeeze()
+    for last_obj_id, last_mask in last_masks_rails.items():
+        if last_obj_id!=obj_id and last_obj_id != 1:
+            last_mask = np.array(last_mask, dtype=np.uint8)
+            last_mask = last_mask.squeeze()
+            substraction = cv2.bitwise_xor(mask, last_mask)
+            intersection = cv2.bitwise_and(mask, last_mask)
+            substraction_px_count = substraction.sum()
+            intersection_px_count = intersection.sum()
+            last_mask_px_count = last_mask.sum()
+            mask_px_count = mask.sum()
+            if intersection_px_count/mask_px_count>1 or (intersection_px_count/mask_px_count>0.8 and substraction_px_count < (0.1 * last_mask_px_count)):
+                result = True
+                break
     return result

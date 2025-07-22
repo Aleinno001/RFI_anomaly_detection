@@ -905,9 +905,6 @@ def refine_mask(mask, previous_mask=None):
     1:w + 1] = mask
     cv2.floodFill(black_image, padded_mask, (0, 0), 255)
     black_and_white_mask_image = cv2.bitwise_not(black_image)
-
-    #Approccio più semplice
-
     # blur
     blur = cv2.GaussianBlur(black_and_white_mask_image, (0, 0), sigmaX=4, sigmaY=2)
     # otsu threshold
@@ -922,114 +919,13 @@ def refine_mask(mask, previous_mask=None):
     black_image = np.zeros_like(black_and_white_mask_image)
     cv2.drawContours(black_image, [main_contour], -1, (255, 255, 255), 3)
     cv2.fillPoly(black_image, pts=[main_contour], color=(255, 255, 255))
-
-    '''
-    # blur
-    blur = cv2.GaussianBlur(black_and_white_mask_image, (0, 0), sigmaX=3, sigmaY=3)
-    # otsu threshold
-    thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-    
-    # apply morphology
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    morph = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
-
-    #----------Cleaning and obtaining filled and crisp mask in BW----------
-    black_image = np.zeros((h, w), dtype=np.uint8)
-    padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
-    padded_mask[1:h + 1,
-    1:w + 1] = morph
-    cv2.floodFill(black_image, padded_mask, (0, 0), 255)
-    black_and_white_mask_image = cv2.bitwise_not(black_image)
-    #----------------checking old mask------------
-    if previous_mask is not None:
-        previous_mask_image = previous_mask*255
-        previous_mask_image = previous_mask_image.astype(black_and_white_mask_image.dtype)
-
-    #Removing mask "islands"or other noise not connected to the main detected object
-    contours, _ = cv2.findContours(black_and_white_mask_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    main_contour = max(contours, key=cv2.contourArea)
-    main_contour = main_contour[:, 0, :]  # Remove nesting
-
-    black_image = np.zeros_like(black_and_white_mask_image)
-    cv2.drawContours(black_image, [main_contour], -1, (255, 255, 255), 3)
-    cv2.fillPoly(black_image, pts=[main_contour], color=(255, 255, 255))
-
-    lrail_p_x = []
-    lrail_p_y = []
-    rrail_p_x = []
-    rrail_p_y = []
-    for j in range(h-1,0,-3):
-        i=0
-        left_x_temp_points = []
-        right_x_temp_points = []
-        while i<w:
-            if black_image[j][i]==255:
-                left_x_temp_points.append(i)
-                i+=1
-                while i<w and black_image[j][i]==255:
-                    i+=1
-                right_x_temp_points.append(i-1)
-            else:
-                i+=1
-        if len(left_x_temp_points)>0 and len(right_x_temp_points)>0:
-            left_x_temp_points = np.array(left_x_temp_points)
-            lrail_p_x.append(left_x_temp_points.min())
-            lrail_p_y.append(j)
-            right_x_temp_points = np.array(right_x_temp_points)
-            rrail_p_x.append(right_x_temp_points.max())
-            rrail_p_y.append(j)
-
-    xy_array_left_rail = smooth_curve_from_points(lrail_p_x, lrail_p_y)
-
-    xy_array_right_rail = smooth_curve_from_points(rrail_p_x, rrail_p_y)
-
-    xy_array_right_rail = xy_array_right_rail[::-1]
-    poly_points = np.array(xy_array_left_rail,dtype=np.int32)
-    poly_points = np.concatenate((poly_points, np.array(xy_array_right_rail,dtype=np.int32)))
-    poly_points = poly_points.reshape((-1, 1, 2))
-    polygonal_mask = np.zeros_like(black_image)
-    cv2.polylines(polygonal_mask, [poly_points], isClosed=True, color=(255, 255, 255), thickness=2)
-    cv2.fillPoly(polygonal_mask, pts=[poly_points], color=(255, 255, 255))
-
-    #FIXME da mettere in un metodo
-    #Using past mask for compensation of great variations in the mask
-    if previous_mask is not None:
-        intersection = cv2.bitwise_and(polygonal_mask, previous_mask_image)
-        result = cv2.bitwise_xor(intersection, polygonal_mask)
-        scan_height = int(3*h/4)    #Checking only the bottom part of the mask, wich is the part that sholud be the steadiest
-        #Intersected mask (difference between old and new mask) pixel counting
-        white_px = 0
-        for j in range(scan_height,h):
-            for i in range(w):
-                if result[j][i] == 255:
-                    white_px += 1
-        #Total old mask pixel counting
-        tot_px = 0
-        for j in range(scan_height,h):
-            for i in range(w):
-                if previous_mask_image[j][i] == 255:
-                    tot_px += 1
-        difference_percentage = white_px / tot_px
-        if difference_percentage>0.05:      #Using old mask bottom part if the canche is too drastic
-            old_mask_copy = previous_mask_image.copy()
-            for j in range(scan_height):
-                for i in range(w):
-                    old_mask_copy[j][i] = 0
-            fixed_image = cv2.bitwise_or(polygonal_mask, old_mask_copy)
-            polygonal_mask = fixed_image
-    #Expanding the mask at the edges for better coverage of the rails
-    blur = cv2.GaussianBlur(polygonal_mask, (0, 0), sigmaX=4, sigmaY=1)
-    thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY)[1]
-    '''
     a = black_image.astype(bool)
     return a
 
-def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggetto poggiato sul terreno e cambiare il coolore in base alla vicinanza al binario
+def show_anomalies(mask, ax,rail_mask):
      #FIXME infatti se per esempio una persona è in piedi accanto ai binari ma è alta e il binario cirva in lontananza dietro la persona diventa arancione ma non è giusto
     mask = np.array(mask, dtype=np.uint8)
     mask = mask.squeeze()
-    #TODO da blurrare le maschere degli oggetti cosi si detecta meglio il pericolo se non si toccano
     rail_mask = np.array(rail_mask, dtype=np.uint8)
     rail_mask = rail_mask.squeeze()
     #Expanding mask to detect near objects to the rails
@@ -1042,10 +938,6 @@ def show_anomalies(mask, ax,rail_mask):       #TODO verificare se sono un oggett
         color = np.array([234 / 255, 255 / 255, 0 / 255, 0.5])
     h, w = mask.shape[-2:]
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-    #contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    # Try to smooth contours
-    #contours = [cv2.approxPolyDP(contour, epsilon=0.01, closed=True) for contour in contours]
-    #mask_image = cv2.drawContours(mask_image, contours, -1, (1, 1, 1, 0.5), thickness=3)
     ax.imshow(mask_image)
 
 def is_point_inside_box(point, box):

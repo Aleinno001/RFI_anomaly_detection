@@ -144,12 +144,8 @@ def main():
     # Load the SAM2 model
     sam2_checkpoint = config['sam2_checkpoint']
     sam2_cfg_path = config['sam2_cfg_path']
-    sam2 = build_sam2(sam2_cfg_path, sam2_checkpoint, device=device)
-    #image_predictor = SAM2ImagePredictor(sam2)
-    #video_predictor = build_sam2_video_predictor(sam2_cfg_path, sam2_checkpoint, device=device)
 
-    #FIXME da scrivere meglio
-    video_predictor_rails = build_sam2_video_predictor("configs/sam2.1/sam2.1_hiera_t.yaml", "models/sam2.1/sam2.1_hiera_tiny.pt", device=device)
+    video_predictor_rails = build_sam2_video_predictor(sam2_cfg_path, sam2_checkpoint, device=device)
 
     # Load the GroundingDINO model
     groundingdino_checkpoint = config['groundingdino_checkpoint']
@@ -157,7 +153,7 @@ def main():
     groundingdino = load_model(groundingdino_cfg_path, groundingdino_checkpoint, device=device)
     BOX_TRESHOLD = args.box_threshold
     TEXT_TRESHOLD = args.text_threshold
-    #FIXME da scrivere meglio
+
     RAILWAY_PROMPT = "one train track."
     OBSTACLE_PROMPT = ["all objects.","all humans.","all animals."]
     GROUND_PROMPT = "all railways. ground."
@@ -190,9 +186,8 @@ def main():
     print(f"Video stream at {fps} FPS, resolution: {width}x{height}")
 
     # Object tracking variables
-    ann_rail_id = 0 #FIXME da rimettere ad 1 nel caso in cui tolgo il ground
+    ann_rail_id = 0
     last_masks_rails = {}  # Store the last known mask for each object
-    #TODO da implementare i gradi di pericolo degli ostacoli
     frame_idx = 0
     main_railway_box = None
     ground_box = None
@@ -242,7 +237,7 @@ def main():
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
                     frame_path, groundingdino, RAILWAY_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
                     TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
-                )#TODO Rimuovere lo show=True
+                )
 
                 max_score_railway = 0
                 for i,box in enumerate(dino_boxes):
@@ -254,14 +249,14 @@ def main():
                         dino_box_center = (box[0] + box[2]) // 2
                         image_center = width // 2
                         dino_abs_distance_from_center = abs(dino_box_center - image_center)
-                        if dino_box_width >= int(0.75*width):       #FIXME controllare se il 75% va bene
-                            if dino_abs_distance_from_center < int(0.25*width):     #FIXME controlare se il 25% va bene
+                        if dino_box_width >= int(0.75*width):
+                            if dino_abs_distance_from_center < int(0.25*width):
                                 if dino_scores[i] > max_score_railway:
                                     main_railway_box = box
                                     max_score_railway = dino_scores[i]
                 all_obstacles_points = []
                 #---------prova di fare più detection singole per ogni parola--
-                for class_name in OBSTACLE_PROMPT:          #Evita di inquadrare lo stesso oggetto più volte
+                for class_name in OBSTACLE_PROMPT:
                     dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
                         frame_path, groundingdino, class_name, device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
                         TEXT_TRESHOLD=TEXT_TRESHOLD_OBSTACLES, show=False,
@@ -271,7 +266,6 @@ def main():
                         x_min, y_min, x_max, y_max = box
                         x_center = (x_min + x_max) // 2
                         y_center = (y_min + y_max) // 2
-                        #TODO check if the same point is alresy in the list (da fare anche più giu)
                         if (x_center, y_center) not in all_obstacles_points:
                             all_obstacles_points.append([x_center, y_center])
 
@@ -282,7 +276,7 @@ def main():
                 if main_railway_box is not None:
                     points, labels = utility.extract_main_internal_railway_points_and_labels(frame_rgb, main_railway_box,last_masks_rails)
 
-                    _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(      #TODO la maschera generata andrebbe espandsa dai lati per includere i binari e contorni, magari anche blurrarla
+                    _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
                         inference_state=inference_state_rails,
                         frame_idx=0,
                         obj_id=ann_rail_id,
@@ -313,13 +307,10 @@ def main():
                         if utility.is_mask_an_obstacle(temp_mask, last_masks_rails[1],ground_box):
                             last_masks_rails[ann_rail_id] = temp_mask
                         else:
-                            video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)     #TODO da aggiungere dove voglio togliere il tracking di oggetti sbagliati
-                            print(f"Removed obstacle {ann_rail_id} because it was not an obstacle")
+                            video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)
 
             else:
-                #FIXME da scrivere meglio
                 #For non-first frames, transfer objects from previous frame
-
                 for obj_id, mask in last_masks_rails.items():
                     # Convert mask to proper format and find center point
                     mask_array = np.asarray(mask)
@@ -355,7 +346,6 @@ def main():
                                 points=[[center_x, center_y]],
                                 labels=np.array([1], np.int32),
                             )
-            #TODO vedi di fare come sotto però per il ground
 
             # Propagate all objects in current frame
             result_rails = next(video_predictor_rails.propagate_in_video(
@@ -367,8 +357,8 @@ def main():
 
             # Update all masks for next frame
             for i, obj_id in enumerate(out_obj_ids):
-                if obj_id == 1: #Fixme mettere se è la maschera binario
-                    last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])  #FIXME non fa refine al binario ma solo a tutto il resto
+                if obj_id == 1:
+                    last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])
                     #last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
                 else:
                     last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
@@ -391,11 +381,9 @@ def main():
                 dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
                     frame_path, groundingdino, RAILWAY_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
                     TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
-                )  # TODO Rimuovere lo show=true
-                # TODO tra le bounding box togliere quelle che sono troppo grosse
-                # Find main railway box and object points
-                # FIXME come faccio a fare che prenda solo il binario centrale, perchè alcune volte prende tutti i binari
+                )
 
+                # Find main railway box and object points
                 for i, box in enumerate(dino_boxes):
                     if main_railway_box is None:
                         main_railway_box = box
@@ -409,14 +397,13 @@ def main():
                         if actual_box_area < main_box_area:
                             main_railway_box = box
 
-                #FIXME da scrivere meglio
                 dino_boxes = []
                 phrases = []
                 for class_name in OBSTACLE_PROMPT:
                     t_dino_boxes, t_phrases, _ = utility.grounding_Dino_analyzer(
                         frame_path, groundingdino, class_name, device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
                         TEXT_TRESHOLD=TEXT_TRESHOLD_OBSTACLES, show = False,
-                    )#TODO rimuovere show=tru
+                    )
                     i=0
                     for box in t_dino_boxes:
                         if all(not np.array_equal(box, item) for item in dino_boxes):
@@ -426,7 +413,7 @@ def main():
 
                 # Check each detected object
                 for i, phrase in enumerate(phrases):
-                    if phrases[i] != 'one train track': #TODO gestire la rail separata, verificare che il obstacle prompt vada bene mettere più frasi così
+                    if phrases[i] != 'one train track':
                         x_min, y_min, x_max, y_max = dino_boxes[i]
                         center_x = (x_min + x_max) // 2
                         center_y = (y_min + y_max) // 2
@@ -472,26 +459,15 @@ def main():
                                     last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 
             #Removal of tracked masks that probably are not obstacles, but the same railway or other geometries in the image
-            #TODO da togliere le doppie maschere sovrapposte identiche
             for obj_id, mask in last_masks_rails.items():
                 if  obj_id!=1 and ((not utility.is_mask_an_obstacle(mask, last_masks_rails[1], ground_box)) or utility.is_mask_duplicate(mask, obj_id, last_masks_rails)):
                     video_predictor_rails.remove_object(inference_state_rails, obj_id)
-                    last_masks_rails[obj_id] = np.zeros_like(mask)      #FIXME da rimuovere meglio, magari riorganizzre l'array ricompattandolo
-
-                    # Re-propagate with the new object
-                    result_rails = next(video_predictor_rails.propagate_in_video(
-                        inference_state_rails,
-                        start_frame_idx=0
-                    ))
-                    _, out_obj_ids, out_mask_logits = result_rails
-
-                    # Update masks dictionary
-                    for i, obj_id in enumerate(out_obj_ids):
-                        if obj_id == 1:
-                            last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[i] > 0).cpu().numpy(),
-                                                                           last_masks_rails[obj_id])
+                    last_masks_rails[obj_id] = np.zeros_like(mask)
+                    for i in range(obj_id, len(last_masks_rails)-1,1):
+                        if i!=len(last_masks_rails)-1:
+                            last_masks_rails[i] = last_masks_rails[i+1]
                         else:
-                            last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
+                            last_masks_rails.pop(i)
 
             # Create visualization
             plt.figure(figsize=(8, 6))

@@ -956,7 +956,7 @@ def is_mask_an_obstacle(mask, rail_mask, railway_box):      #FIXME se un oggetto
     mask = mask.squeeze()
     rail_mask = np.array(rail_mask, dtype=np.uint8)
     rail_mask = rail_mask.squeeze()
-    blurred_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=2, sigmaY=2)
+    blurred_mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=3, sigmaY=3)
     binary_mask =cv2.threshold(blurred_mask, 0, 255, cv2.THRESH_BINARY)[1]
     intersection = cv2.bitwise_and(binary_mask, rail_mask)
     substraction = cv2.bitwise_xor(binary_mask, rail_mask)

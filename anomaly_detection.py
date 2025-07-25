@@ -159,8 +159,8 @@ def main():
     GROUND_PROMPT = "all railways. ground."
     BOX_TRESHOLD_RAILS = 0.25
     TEXT_TRESHOLD_RAILS = 0.15
-    BOX_TRESHOLD_OBSTACLES = 0.40 #45
-    TEXT_TRESHOLD_OBSTACLES = 0.60  #65
+    BOX_TRESHOLD_OBSTACLES = 0.44 #45
+    TEXT_TRESHOLD_OBSTACLES = 0.65  #65
     BOX_TRESHOLD_GROUND = 0.30
     TEXT_TRESHOLD_GROUND = 0.30
 
@@ -486,7 +486,7 @@ def main():
                 key = cv2.waitKey(1)
                 if key == ord('q'):
                     raise KeyboardInterrupt
-            if False:  #to remove True in args.save_frames
+            if True:  #to remove True in args.save_frames
                 plt.savefig(os.path.join(args.output_path, f"frame_{frame_idx:06d}.jpg"))
             plt.close()
 

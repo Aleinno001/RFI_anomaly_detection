@@ -4,7 +4,6 @@ import cv2
 import numpy as np
 import torch
 from scipy.signal import savgol_filter
-#from sam2.benchmark import predictor
 from torchvision.ops import box_convert
 
 from groundingdino.util.inference import load_image, predict, annotate

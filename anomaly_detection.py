@@ -1,21 +1,12 @@
-import numpy
-import pandas as pd
-import seaborn as sns
-from PIL.ImageChops import offset
-from groundingdino.util.inference import load_model, load_image
-from scipy.interpolate import interp1d, make_interp_spline, splprep, splev, UnivariateSpline
+from groundingdino.util.inference import load_model
 import os
 import torch
-from PIL import Image
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 import gc
 import time
-from sam2.build_sam import build_sam2, build_sam2_video_predictor
-from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator, SAM2ImagePredictor
-from ultralytics import SAM
-from scipy.signal import savgol_filter
+from sam2.build_sam import build_sam2_video_predictor
 
 import utility
 from gpu_utility import set_device
@@ -475,7 +466,6 @@ def main():
             rail_mask = None
             for obj_id, mask in last_masks_rails.items():
                 #utility.show_mask_v(mask, plt.gca(), obj_id=obj_id)
-                #TODO mettere metodo che evidenzia i pericoli
                 if obj_id != 1 and obj_id != 0:
                     utility.show_anomalies(mask,plt.gca(),rail_mask)
                 else:
@@ -486,7 +476,7 @@ def main():
                 key = cv2.waitKey(1)
                 if key == ord('q'):
                     raise KeyboardInterrupt
-            if True:  #to remove True in args.save_frames
+            if False:  #to remove True in args.save_frames
                 plt.savefig(os.path.join(args.output_path, f"frame_{frame_idx:06d}.jpg"))
             plt.close()
 
@@ -495,7 +485,7 @@ def main():
             print(f"Frame processed in {processing_time:.2f}s")
 
             # Increment frame counter
-            frame_idx += 1      #FIXME per refreshare la segmentazione di sam2 posso detectare il cambio dei binari con una IA e refreshare lì, invece che ogni 15 frame
+            frame_idx += 1
 
             # Clear memory for next iteration
             #del inference_state

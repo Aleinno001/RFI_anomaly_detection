@@ -51,7 +51,7 @@ def show_mask(mask, ax, random_color=False, borders=True):
     ax.imshow(mask_image)
 
 
-def show_mask_v(mask, ax, obj_id=None, random_color=False, frame_name=None):
+def show_mask_v(mask, ax, save_fig, frame_idx, obj_id=None, random_color=False):
     if random_color:
         color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
     else:
@@ -60,6 +60,9 @@ def show_mask_v(mask, ax, obj_id=None, random_color=False, frame_name=None):
         color = np.array([*cmap(cmap_idx + 1)[:3], 0.6])
     h, w = mask.shape[-2:]
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+    if save_fig:
+        mask_to_save = (mask_image.astype(np.uint8)) * 255
+        cv2.imwrite(os.path.join("./temp_main_railway/", f"railway_{frame_idx:06d}.jpg"), mask_to_save) #FIXME non salva l'immagine del binario
     ax.imshow(mask_image)
     ax.axis('off')
     # plt.savefig(f"./seg_frames_2/{str(frame_name)}.jpg", bbox_inches='tight', pad_inches=0)
@@ -921,8 +924,9 @@ def refine_mask(mask, previous_mask=None):
     a = black_image.astype(bool)
     return a
 
-def show_anomalies(mask, ax,rail_mask):
-     #FIXME infatti se per esempio una persona è in piedi accanto ai binari ma è alta e il binario cirva in lontananza dietro la persona diventa arancione ma non è giusto
+def show_anomalies(mask, ax,rail_mask, save_fig, obj_id, frame_idx):
+    #FIXME infatti se per esempio una persona è in piedi accanto ai binari ma è alta e il binario cirva in lontananza dietro la persona diventa arancione ma non è giusto
+    safe = False
     mask = np.array(mask, dtype=np.uint8)
     mask = mask.squeeze()
     rail_mask = np.array(rail_mask, dtype=np.uint8)
@@ -934,9 +938,17 @@ def show_anomalies(mask, ax,rail_mask):
     if intersection.sum()>0:
         color = np.array([255 / 255, 136 / 255, 0 / 255, 0.5])
     else:
+        safe = True
         color = np.array([234 / 255, 255 / 255, 0 / 255, 0.5])
     h, w = mask.shape[-2:]
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+    if save_fig:
+        mask_to_save = (mask_image.astype(np.uint8))*255
+
+        if safe:
+            cv2.imwrite(os.path.join("./temp_safe_obstacles/", f"safe_{frame_idx:06d}_{obj_id:03d}.jpg"), mask_to_save)
+        else:
+            cv2.imwrite(os.path.join("./temp_dangerous_obstacles/", f"dangerous_{frame_idx:06d}_{obj_id:03d}.jpg"), mask_to_save)
     ax.imshow(mask_image)
 
 def is_point_inside_box(point, box):

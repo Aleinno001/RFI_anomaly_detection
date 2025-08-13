@@ -106,6 +106,22 @@ def parse_args():
         help="Show frames with detected objects (default: False)"
     )
 
+    # add ground thruth path
+    parser.add_argument(
+        "--ground_truth_path",
+        type=str,
+        default="./test_video/ground_truth.txt",
+        help="Path to ground truth files (three directories: main_railway, safe_obstacles,dangerous_obstacles)"
+    )
+
+    # abilitate accuracy testing
+    parser.add_argument(
+        "--accuracy_test",
+        action="store_true",
+        default=False,
+        help="Test accuracy of the model (default: False)"
+    )
+
     # Additional options
     parser.add_argument(
         "--verbose",
@@ -164,6 +180,10 @@ def main():
     # Create a temporary directory for frame storage
     temp_dir = os.path.join("temp_frames")
     os.makedirs(temp_dir, exist_ok=True)
+
+    temp_main_railway_dir = os.path.join("temp_main_railway")
+    temp_safe_obstacles_dir = os.path.join("temp_safe_obstacles")
+    temp_dangerous_obstacles_dir = os.path.join("temp_dangerous_obstacles")
 
     # Open the video stream
     cap = cv2.VideoCapture(args.input_video)
@@ -464,12 +484,16 @@ def main():
             plt.figure(figsize=(8, 6))
             plt.imshow(frame_rgb)
             rail_mask = None
+            if True:  # accuracy_test
+                os.makedirs(temp_main_railway_dir, exist_ok=True)
+                os.makedirs(temp_safe_obstacles_dir, exist_ok=True)
+                os.makedirs(temp_dangerous_obstacles_dir, exist_ok=True)
             for obj_id, mask in last_masks_rails.items():
                 #utility.show_mask_v(mask, plt.gca(), obj_id=obj_id)
                 if obj_id != 1 and obj_id != 0:
-                    utility.show_anomalies(mask,plt.gca(),rail_mask)
+                    utility.show_anomalies(mask,plt.gca(),rail_mask, True , obj_id,frame_idx) #FIXME al posto di True ci devo mettere args.accuracy_test
                 else:
-                    utility.show_mask_v(mask, plt.gca(), obj_id=obj_id)
+                    utility.show_mask_v(mask, plt.gca(), True, frame_idx, obj_id=obj_id)#FIXME al posto di True ci devo mettere args.accuracy_test
                     rail_mask = mask
             if True:  # show the plt image using OpenCV     args.show_frames
                 cv2.imshow("Processed video frame", utility.plt_figure_to_cv2( plt.gcf()))
@@ -478,6 +502,7 @@ def main():
                     raise KeyboardInterrupt
             if False:  #to remove True in args.save_frames
                 plt.savefig(os.path.join(args.output_path, f"frame_{frame_idx:06d}.jpg"))
+
             plt.close()
 
             # Calculate processing time
@@ -503,6 +528,15 @@ def main():
         for file in os.listdir(temp_dir):
             os.remove(os.path.join(temp_dir, file))
         os.rmdir(temp_dir)
+        for file in os.listdir(temp_main_railway_dir):
+            os.remove(os.path.join(temp_main_railway_dir, file))
+        os.rmdir(temp_main_railway_dir)
+        for file in os.listdir(temp_safe_obstacles_dir):
+            os.remove(os.path.join(temp_safe_obstacles_dir, file))
+        os.rmdir(temp_safe_obstacles_dir)
+        for file in os.listdir(temp_dangerous_obstacles_dir):
+            os.remove(os.path.join(temp_dangerous_obstacles_dir, file))
+        os.rmdir(temp_dangerous_obstacles_dir)
 
         if args.show_frames:
             cv2.destroyAllWindows()

@@ -1073,7 +1073,9 @@ def calculate_accuracy(temp_main_railway_dir: str):
     Args:
         temp_main_railway_dir: Directory where detected masks are stored, named like "railway_XXXXXX.jpg/png".
     """
-    mean_detection_rate = 0.0
+    mean_precision = 0.0
+    mean_recall = 0.0
+    mean_f1_score = 0.0
     mean_IoU = 0.0
     frame_count = 0
 
@@ -1149,16 +1151,19 @@ def calculate_accuracy(temp_main_railway_dir: str):
             print(f"[calculate_accuracy] Warning: empty ground truth mask for frame {frame_idx}, skipping.")
             continue
 
-        excess_px_over_intersection = detected_railway_mask.sum() - intersection_px_count
-        percentage_over_exeeded_intersection = excess_px_over_intersection / intersection_px_count
-        percentage_over_intersection = intersection_px_count / gt_px_count
-        if percentage_over_intersection > 0.5 and percentage_over_exeeded_intersection < 0.25:  #Conta la detection solo se la maschera detectata non è semplicemtente enorme ed include per caso la maschera desiderat
-            mean_detection_rate += 1.0
+        excess_px_over_intersection = int(cv2.countNonZero(detected_railway_mask)) - intersection_px_count
+        expanded_ground_truth_railway_mask_image = cv2.dilate(ground_truth_railway_mask_image, kernel=np.ones((8, 8), np.uint8), iterations=1)#4 pixel dilatation
+        intersection_over_expanded_ground_truth = cv2.bitwise_and(detected_railway_mask, expanded_ground_truth_railway_mask_image)
+        intersection_over_expanded_ground_truth_pixel_count = cv2.countNonZero(intersection_over_expanded_ground_truth)
+        detected_px_count = cv2.countNonZero(detected_railway_mask)
 
         union = cv2.bitwise_or(detected_railway_mask, ground_truth_railway_mask_image)
         union_px_count = int(cv2.countNonZero(union))
 
-        mean_IoU += intersection_px_count / union_px_count
+        IoU = (intersection_px_count / union_px_count)
+        mean_IoU += (intersection_px_count / union_px_count)
+        if IoU > 0.75:
+            mean_precision+=1
 
         frame_count += 1
 
@@ -1166,7 +1171,16 @@ def calculate_accuracy(temp_main_railway_dir: str):
         print("[calculate_accuracy] No valid frames were processed.")
         return
 
-    mean_detection_rate /= frame_count
     mean_IoU = mean_IoU / frame_count
-    print("Mean detection rate:", mean_detection_rate)
     print("Mean mask accuracy:", mean_IoU)
+    mean_precision = mean_precision / frame_count     #TODO precision è tutte le detection con IoU>80/tutte le detection (ok fatto perchè frame_count conta in realtà tutte le detection)
+    print("Mean mask precision:", mean_precision)
+    total_ground_truth_annotation_count = len(gt_files)
+    #TODO accuracy è (tutte le IoU>50 ()o altro )/il numero di elementi in ground truth
+    mean_recall = mean_precision/total_ground_truth_annotation_count
+    print("Mean mask recall:", mean_recall)
+    mean_f1_score = 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
+    print("Mean mask F1 score:", mean_f1_score)
+    #TODO la F1 score è 2*(precision*recall/(precision+recall))
+
+    #FIXME da mettere i controlli per le divisioni per zero

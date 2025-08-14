@@ -59,11 +59,21 @@ def show_mask_v(mask, ax, save_fig, frame_idx, obj_id=None, random_color=False):
         cmap_idx = 0 if obj_id is None else obj_id
         color = np.array([*cmap(cmap_idx + 1)[:3], 0.6])
     h, w = mask.shape[-2:]
-    mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+    #mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+    mask = mask.astype(np.float32).reshape(h, w)  # ensure float32 2D
+
+    # RGBA image for display with matplotlib (still fine)
+    mask_image_rgba = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+
     if save_fig:
-        mask_to_save = (mask_image.astype(np.uint8)) * 255
-        cv2.imwrite(os.path.join("./temp_main_railway/", f"railway_{frame_idx:06d}.jpg"), mask_to_save) #FIXME non salva l'immagine del binario
-    ax.imshow(mask_image)
+        # Build a 3-channel BGR image on black background for OpenCV/JPEG
+        rgb = (color[:3] * 255).astype(np.uint8)  # the solid color for the mask
+        out_bgr = np.zeros((h, w, 3), dtype=np.uint8)
+        m = mask > 0  # boolean mask
+        out_bgr[m] = rgb[::-1]  # convert RGB -> BGR
+
+        cv2.imwrite(os.path.join("./temp_main_railway/", f"railway_{frame_idx:06d}.jpg"), out_bgr)
+    ax.imshow(mask_image_rgba)
     ax.axis('off')
     # plt.savefig(f"./seg_frames_2/{str(frame_name)}.jpg", bbox_inches='tight', pad_inches=0)
 
@@ -1023,3 +1033,140 @@ def is_mask_duplicate(mask, obj_id, last_masks_rails):
                 result = True
                 break
     return result
+'''
+def calculate_accuracy(temp_main_railway_dir):
+    #Come prima cosa faccio il confronto sulle rail
+    mean_detection_rate = 0
+    mean_mask_accuracy = 0
+    frame_count = 0
+    for file in os.listdir("./ground_truth/main_railway"):
+        frame_count += 1
+        ground_truth__railway_mask = cv2.imread(os.path.join("./ground_truth/main_railway", file))
+        ground_truth__railway_mask = cv2.cvtColor(ground_truth__railway_mask, cv2.COLOR_BGR2GRAY)
+        ground_truth__railway_mask = cv2.threshold(ground_truth__railway_mask, 0, 255, cv2.THRESH_BINARY)[1]
+        ground_truth__railway_mask = ground_truth__railway_mask.astype(np.uint8)
+        ground_truth__railway_mask = ground_truth__railway_mask.squeeze()
+        frame_idx = int((file.split("_")[1]).split(".")[0])
+        file_name = os.path.join(temp_main_railway_dir, f"railway_{frame_idx:06d}.jpg")
+        detected_railway_mask_image = cv2.imread(file_name)
+        cv2.imshow(detected_railway_mask_image)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        detected_railway_mask_image = cv2.cvtColor(detected_railway_mask_image, cv2.COLOR_BGR2GRAY)
+        detected_railway_mask_image = cv2.threshold(detected_railway_mask_image, 0, 255, cv2.THRESH_BINARY)[1]
+        detected_railway_mask_image = detected_railway_mask_image.astype(np.uint8)
+        detected_railway_mask_image = detected_railway_mask_image.squeeze()
+        #TODO intersezione, poi percentuale pixel int e ground è > di tot, in piu faccio l'opposto della intersezione e controllo non sia una percentuale troppo alta
+        intersection = cv2.bitwise_and(detected_railway_mask_image, ground_truth__railway_mask)
+        intersection_px_count = intersection.sum()
+        ground_truth_railway_mask_px_count = ground_truth__railway_mask.sum()
+        percentage_over_intersection = intersection_px_count/ground_truth_railway_mask_px_count
+        if percentage_over_intersection>0.5:
+            mean_detection_rate+=1
+    mean_detection_rate = mean_detection_rate/frame_count
+    print("Mean detection rate:",mean_detection_rate)
+'''
+def calculate_accuracy(temp_main_railway_dir: str):
+    """
+    Compare detected railway masks against ground-truth masks and print the mean detection rate.
+
+    Args:
+        temp_main_railway_dir: Directory where detected masks are stored, named like "railway_XXXXXX.jpg/png".
+    """
+    mean_detection_rate = 0.0
+    mean_IoU = 0.0
+    frame_count = 0
+
+    if not isinstance(temp_main_railway_dir, str) or not os.path.isdir(temp_main_railway_dir):
+        print(f"[calculate_accuracy] Detected masks directory not found or invalid: {temp_main_railway_dir}")
+        return
+
+    gt_dir = "./ground_truth/main_railway"
+    if not os.path.isdir(gt_dir):
+        print(f"[calculate_accuracy] Ground truth directory not found: {gt_dir}")
+        return
+
+    gt_files = sorted(os.listdir(gt_dir))
+    if not gt_files:
+        print(f"[calculate_accuracy] No ground truth files found in: {gt_dir}")
+        return
+
+    # Consider common image extensions
+    valid_exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+    detected_files = sorted(
+        f for f in os.listdir(temp_main_railway_dir)
+        if os.path.isfile(os.path.join(temp_main_railway_dir, f)) and os.path.splitext(f.lower())[-1] in valid_exts
+    )
+
+    if not detected_files:
+        print(f"[calculate_accuracy] No detected mask files found in: {temp_main_railway_dir}")
+        return
+
+    for file in detected_files:
+        detected_path = os.path.join(temp_main_railway_dir, file)
+        detected_railway_mask = cv2.imread(detected_path, cv2.IMREAD_GRAYSCALE)
+        if detected_railway_mask is None:
+            print(f"[calculate_accuracy] Warning: could not read detected mask: {detected_path}")
+            continue
+
+        # Binarize detected mask
+        _, detected_railway_mask = cv2.threshold(detected_railway_mask, 0, 255, cv2.THRESH_BINARY)
+        detected_railway_mask = detected_railway_mask.astype(np.uint8).squeeze()
+
+        # Extract frame index assuming format like "railway_XXXXXX.ext"
+        try:
+            frame_idx = int((file.split("_")[1]).split(".")[0])
+        except Exception:
+            print(f"[calculate_accuracy] Warning: could not parse frame index from filename: {file}")
+            continue
+
+        # Build ground-truth file path
+        gt_file = os.path.join(gt_dir, f"frame_{frame_idx:06d}.png")
+        ground_truth_railway_mask_image = cv2.imread(gt_file, cv2.IMREAD_GRAYSCALE)
+        if ground_truth_railway_mask_image is None:
+            print(f"[calculate_accuracy] Warning: ground truth mask not found or unreadable: {gt_file}")
+            continue
+
+        # Binarize ground truth
+        _, ground_truth_railway_mask_image = cv2.threshold(ground_truth_railway_mask_image, 0, 255, cv2.THRESH_BINARY)
+        ground_truth_railway_mask_image = ground_truth_railway_mask_image.astype(np.uint8).squeeze()
+
+        # Ensure same size
+        if detected_railway_mask.shape != ground_truth_railway_mask_image.shape:
+            detected_railway_mask = cv2.resize(
+                detected_railway_mask,
+                (ground_truth_railway_mask_image.shape[1], ground_truth_railway_mask_image.shape[0]),
+                interpolation=cv2.INTER_NEAREST
+            )
+
+        # Intersection-over-GT coverage
+        intersection = cv2.bitwise_and(detected_railway_mask, ground_truth_railway_mask_image)      #TODO per controllare che funzioni devo porvare a visualizzare
+        intersection_px_count = int(cv2.countNonZero(intersection))
+        gt_px_count = int(cv2.countNonZero(ground_truth_railway_mask_image))
+
+        if gt_px_count == 0:
+            print(f"[calculate_accuracy] Warning: empty ground truth mask for frame {frame_idx}, skipping.")
+            continue
+
+        excess_px_over_intersection = detected_railway_mask.sum() - intersection_px_count
+        percentage_over_exeeded_intersection = excess_px_over_intersection / intersection_px_count
+        percentage_over_intersection = intersection_px_count / gt_px_count
+        if percentage_over_intersection > 0.5 and percentage_over_exeeded_intersection < 0.25:  #Conta la detection solo se la maschera detectata non è semplicemtente enorme ed include per caso la maschera desiderat
+            mean_detection_rate += 1.0
+
+        union = cv2.bitwise_or(detected_railway_mask, ground_truth_railway_mask_image)
+        union_px_count = int(cv2.countNonZero(union))
+
+        mean_IoU += intersection_px_count / union_px_count
+
+        frame_count += 1
+
+    if frame_count == 0:
+        print("[calculate_accuracy] No valid frames were processed.")
+        return
+
+    mean_detection_rate /= frame_count
+    mean_IoU = mean_IoU / frame_count
+    print("Mean detection rate:", mean_detection_rate)
+    print("Mean mask accuracy:", mean_IoU)

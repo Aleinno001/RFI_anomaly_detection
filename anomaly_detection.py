@@ -521,6 +521,10 @@ def main():
     except (KeyboardInterrupt, SystemExit):
         print("Exiting gracefully...")
     finally:
+
+        if True:#FIXME al posto di True ci devo mettere args.accuracy_test
+            utility.calculate_accuracy(temp_main_railway_dir)
+
         # Release resources
         cap.release()
 

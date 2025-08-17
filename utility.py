@@ -1066,16 +1066,19 @@ def calculate_accuracy(temp_main_railway_dir):
     mean_detection_rate = mean_detection_rate/frame_count
     print("Mean detection rate:",mean_detection_rate)
 '''
-def calculate_accuracy(temp_main_railway_dir: str):
+def calculate_accuracy(temp_main_railway_dir):
+    #TODO per fare funzionare parametrico: ordino i file, prendo il primo file detected, leggo il numero del frame, poi prendo tutti i file con quel frame idx e poi lavoro, poi aumento il frame idx e guardo se ci sono files per quell idx, senno aumento finche non trovo
+    #TODO qua dentro invocare due metodi, uno per le metriche per il binario, uno per gli ostacoli che vanno gestiti bene con i colori differenti per ogni frame per distinguere gli oggetti diversi
     """
     Compare detected railway masks against ground-truth masks and print the mean detection rate.
 
     Args:
         temp_main_railway_dir: Directory where detected masks are stored, named like "railway_XXXXXX.jpg/png".
     """
+    mean_IoU_rails, mean_recall_rails, mean_precision_rails, mean_f1_score_rails = calculate_accuracy_main_railway(temp_main_railway_dir)
+
+def calculate_accuracy_main_railway(temp_main_railway_dir):
     mean_precision = 0.0
-    mean_recall = 0.0
-    mean_f1_score = 0.0
     mean_IoU = 0.0
     frame_count = 0
 
@@ -1104,6 +1107,8 @@ def calculate_accuracy(temp_main_railway_dir: str):
     if not detected_files:
         print(f"[calculate_accuracy] No detected mask files found in: {temp_main_railway_dir}")
         return
+
+    frame_idx = 0
 
     for file in detected_files:
         detected_path = os.path.join(temp_main_railway_dir, file)
@@ -1151,12 +1156,7 @@ def calculate_accuracy(temp_main_railway_dir: str):
             print(f"[calculate_accuracy] Warning: empty ground truth mask for frame {frame_idx}, skipping.")
             continue
 
-        excess_px_over_intersection = int(cv2.countNonZero(detected_railway_mask)) - intersection_px_count
         expanded_ground_truth_railway_mask_image = cv2.dilate(ground_truth_railway_mask_image, kernel=np.ones((8, 8), np.uint8), iterations=1)#4 pixel dilatation
-        intersection_over_expanded_ground_truth = cv2.bitwise_and(detected_railway_mask, expanded_ground_truth_railway_mask_image)
-        intersection_over_expanded_ground_truth_pixel_count = cv2.countNonZero(intersection_over_expanded_ground_truth)
-        detected_px_count = cv2.countNonZero(detected_railway_mask)
-
         union = cv2.bitwise_or(detected_railway_mask, ground_truth_railway_mask_image)
         union_px_count = int(cv2.countNonZero(union))
 
@@ -1173,14 +1173,56 @@ def calculate_accuracy(temp_main_railway_dir: str):
 
     mean_IoU = mean_IoU / frame_count
     print("Mean mask accuracy:", mean_IoU)
+    mean_recall = mean_precision / frame_idx
+    print("Mean mask recall:", mean_recall)
     mean_precision = mean_precision / frame_count     #TODO precision è tutte le detection con IoU>80/tutte le detection (ok fatto perchè frame_count conta in realtà tutte le detection)
     print("Mean mask precision:", mean_precision)
-    total_ground_truth_annotation_count = len(gt_files)
     #TODO accuracy è (tutte le IoU>50 ()o altro )/il numero di elementi in ground truth
-    mean_recall = mean_precision/total_ground_truth_annotation_count
-    print("Mean mask recall:", mean_recall)
     mean_f1_score = 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
     print("Mean mask F1 score:", mean_f1_score)
     #TODO la F1 score è 2*(precision*recall/(precision+recall))
 
     #FIXME da mettere i controlli per le divisioni per zero
+    return mean_IoU, mean_recall, mean_precision, mean_f1_score
+
+def calculate_accuracy_obstacles(temp_safe_obstacles_dir,temp_dangerous_obstacles_dir):
+    mean_precision = 0.0
+    mean_IoU = 0.0
+    frame_count = 0
+
+    #TODO calcolare le metriche per: safe e danger insieme quindi la accuracy di detection in generale, poi la classification accuracy tra danger e safe
+    temp_main_railway_dir = os.path.join("ground_truth/temp_obstacles")
+    os.makedirs(temp_main_railway_dir, exist_ok=True)
+
+    safe_obstacles_directory = os.path.join("ground_truth/safe_obstacles")
+    danger_obstacles_directory = os.path.join("ground_truth/dangerous_obstacles")
+
+    frame_count = 0
+
+    safe_files = sorted(os.listdir(safe_obstacles_directory))
+    dangerous_files = sorted(os.listdir(danger_obstacles_directory))
+    last_safe_element = safe_files[-1]
+    last_dangerous_element = dangerous_files[-1]
+    frame_count_s = int(last_safe_element.split("_")[1].split(".")[0])
+    frame_count_d = int(last_dangerous_element.split("_")[1].split(".")[0])
+    if frame_count_s>frame_count_d:
+        frame_count = frame_count_s
+    else:
+        frame_count = frame_count_d
+    for i in range(frame_count):
+        if int(safe_files[i].split("_")[1].split(".")[0])==i:
+            if int(dangerous_files[i].split("_")[1].split(".")[0])==i:
+                safe_file_path = os.path.join(safe_obstacles_directory, safe_files[i])
+                danger_file_path = os.path.join(danger_obstacles_directory, dangerous_files[i])
+                safe_mask = cv2.imread(safe_file_path, cv2.IMREAD_GRAYSCALE)
+                danger_mask = cv2.imread(danger_file_path, cv2.IMREAD_GRAYSCALE)
+                safe_mask = cv2.threshold(safe_mask, 0, 255, cv2.THRESH_BINARY)[1]
+                danger_mask = cv2.threshold(danger_mask, 0, 255, cv2.THRESH_BINARY)[1]
+                safe_mask = safe_mask.astype(np.uint8).squeeze()
+                danger_mask = danger_mask.astype(np.uint8).squeeze()
+                safe_mask_image = cv2.cvtColor(safe_mask, cv2.COLOR_GRAY2BGR)
+                danger_mask_image = cv2.cvtColor(danger_mask, cv2.COLOR_GRAY2BGR)
+                #TODO crea un file unico con i due e salvalo in temp obstacles
+            else:
+                #TODO salva nella directory temp obstacles solo il file con il frame corretto
+                print("leggi todo")

@@ -523,8 +523,7 @@ def main():
     finally:
 
         if True:#FIXME al posto di True ci devo mettere args.accuracy_test
-            utility.calculate_accuracy(temp_main_railway_dir)
-
+            utility.calculate_accuracy(frame_idx,temp_main_railway_dir, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
         # Release resources
         cap.release()
 

@@ -1066,7 +1066,7 @@ def calculate_accuracy(temp_main_railway_dir):
     mean_detection_rate = mean_detection_rate/frame_count
     print("Mean detection rate:",mean_detection_rate)
 '''
-def calculate_accuracy(temp_main_railway_dir):
+def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir):
     #TODO per fare funzionare parametrico: ordino i file, prendo il primo file detected, leggo il numero del frame, poi prendo tutti i file con quel frame idx e poi lavoro, poi aumento il frame idx e guardo se ci sono files per quell idx, senno aumento finche non trovo
     #TODO qua dentro invocare due metodi, uno per le metriche per il binario, uno per gli ostacoli che vanno gestiti bene con i colori differenti per ogni frame per distinguere gli oggetti diversi
     """
@@ -1075,12 +1075,17 @@ def calculate_accuracy(temp_main_railway_dir):
     Args:
         temp_main_railway_dir: Directory where detected masks are stored, named like "railway_XXXXXX.jpg/png".
     """
-    mean_IoU_rails, mean_recall_rails, mean_precision_rails, mean_f1_score_rails = calculate_accuracy_main_railway(temp_main_railway_dir)
+    mean_IoU_rails, mean_recall_rails, mean_precision_rails, mean_f1_score_rails = calculate_accuracy_main_railway(number_of_frames,temp_main_railway_dir)
+    #mean_IoU_obstacles, mean_recall_obstacles, mean_precision_obstacles, mean_f1_score_obstacles = calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
 
-def calculate_accuracy_main_railway(temp_main_railway_dir):
-    mean_precision = 0.0
+def calculate_accuracy_main_railway(number_of_frames,temp_main_railway_dir):
+    mean_precision_75 = 0.0
+    false_positive_75 = 0.0
     mean_IoU = 0.0
-    frame_count = 0
+    true_positive_count = 0
+    true_negative_count = 0
+    false_positive_count = 0
+    false_negative_count = 0
 
     if not isinstance(temp_main_railway_dir, str) or not os.path.isdir(temp_main_railway_dir):
         print(f"[calculate_accuracy] Detected masks directory not found or invalid: {temp_main_railway_dir}")
@@ -1110,119 +1115,200 @@ def calculate_accuracy_main_railway(temp_main_railway_dir):
 
     frame_idx = 0
 
-    for file in detected_files:
-        detected_path = os.path.join(temp_main_railway_dir, file)
-        detected_railway_mask = cv2.imread(detected_path, cv2.IMREAD_GRAYSCALE)
-        if detected_railway_mask is None:
-            print(f"[calculate_accuracy] Warning: could not read detected mask: {detected_path}")
-            continue
+    for frame_idx in range(number_of_frames):
+        detected_railway_masks = [ e for e in detected_files if int(e.split("_")[1].split(".")[0]) == frame_idx]
+        ground_truth_railway_masks = [e for e in gt_files if int(e.split("_")[1].split(".")[0]) == frame_idx]
+        if len(detected_railway_masks)!=0 and len(ground_truth_railway_masks)==0:
+            false_positive_75+=1
+        elif len(detected_railway_masks)==0 and len(ground_truth_railway_masks)!=0:
+            false_negative_count+=1
+        elif len(detected_railway_masks)==0 and len(ground_truth_railway_masks)==0:
+            true_negative_count+=1
+        else:
+            true_positive_count += 1
+            detection_image = cv2.imread(os.path.join(temp_main_railway_dir, f"railway_{frame_idx:06d}.jpg"),cv2.IMREAD_GRAYSCALE)
+            gt_image = cv2.imread(os.path.join(gt_dir, f"frame_{frame_idx:06d}.png"),cv2.IMREAD_GRAYSCALE)
+            detection_image = detection_image.astype(np.uint8).squeeze()
+            gt_image = gt_image.astype(np.uint8).squeeze()
 
-        # Binarize detected mask
-        _, detected_railway_mask = cv2.threshold(detected_railway_mask, 0, 255, cv2.THRESH_BINARY)
-        detected_railway_mask = detected_railway_mask.astype(np.uint8).squeeze()
+            intersection = cv2.bitwise_and(detection_image, gt_image)
+            intersection_px_count = cv2.countNonZero(intersection)
+            union = cv2.bitwise_or(detection_image, gt_image)
+            union_px_count = cv2.countNonZero(union)
+            IoU = intersection_px_count/union_px_count
+            mean_IoU+=IoU
+            if IoU>0.75:
+                mean_precision_75+=1
+            else:
+                false_positive_75+=1
 
-        # Extract frame index assuming format like "railway_XXXXXX.ext"
-        try:
-            frame_idx = int((file.split("_")[1]).split(".")[0])
-        except Exception:
-            print(f"[calculate_accuracy] Warning: could not parse frame index from filename: {file}")
-            continue
-
-        # Build ground-truth file path
-        gt_file = os.path.join(gt_dir, f"frame_{frame_idx:06d}.png")
-        ground_truth_railway_mask_image = cv2.imread(gt_file, cv2.IMREAD_GRAYSCALE)
-        if ground_truth_railway_mask_image is None:
-            print(f"[calculate_accuracy] Warning: ground truth mask not found or unreadable: {gt_file}")
-            continue
 
         # Binarize ground truth
-        _, ground_truth_railway_mask_image = cv2.threshold(ground_truth_railway_mask_image, 0, 255, cv2.THRESH_BINARY)
-        ground_truth_railway_mask_image = ground_truth_railway_mask_image.astype(np.uint8).squeeze()
+        #_, ground_truth_railway_mask_image = cv2.threshold(ground_truth_railway_mask_image, 0, 255, cv2.THRESH_BINARY)
+        #ground_truth_railway_mask_image = ground_truth_railway_mask_image.astype(np.uint8).squeeze()
 
-        # Ensure same size
-        if detected_railway_mask.shape != ground_truth_railway_mask_image.shape:
-            detected_railway_mask = cv2.resize(
-                detected_railway_mask,
-                (ground_truth_railway_mask_image.shape[1], ground_truth_railway_mask_image.shape[0]),
-                interpolation=cv2.INTER_NEAREST
-            )
-
-        # Intersection-over-GT coverage
-        intersection = cv2.bitwise_and(detected_railway_mask, ground_truth_railway_mask_image)      #TODO per controllare che funzioni devo porvare a visualizzare
-        intersection_px_count = int(cv2.countNonZero(intersection))
-        gt_px_count = int(cv2.countNonZero(ground_truth_railway_mask_image))
-
-        if gt_px_count == 0:
-            print(f"[calculate_accuracy] Warning: empty ground truth mask for frame {frame_idx}, skipping.")
-            continue
-
-        expanded_ground_truth_railway_mask_image = cv2.dilate(ground_truth_railway_mask_image, kernel=np.ones((8, 8), np.uint8), iterations=1)#4 pixel dilatation
-        union = cv2.bitwise_or(detected_railway_mask, ground_truth_railway_mask_image)
-        union_px_count = int(cv2.countNonZero(union))
-
-        IoU = (intersection_px_count / union_px_count)
-        mean_IoU += (intersection_px_count / union_px_count)
-        if IoU > 0.75:
-            mean_precision+=1
-
-        frame_count += 1
-
-    if frame_count == 0:
-        print("[calculate_accuracy] No valid frames were processed.")
-        return
-
-    mean_IoU = mean_IoU / frame_count
+    mean_IoU = mean_IoU / (true_positive_count + false_negative_count + false_positive_count)
     print("Mean mask accuracy:", mean_IoU)
-    mean_recall = mean_precision / frame_idx
-    print("Mean mask recall:", mean_recall)
-    mean_precision = mean_precision / frame_count     #TODO precision è tutte le detection con IoU>80/tutte le detection (ok fatto perchè frame_count conta in realtà tutte le detection)
-    print("Mean mask precision:", mean_precision)
+    mean_recall_75 = mean_precision_75 / (true_positive_count + false_negative_count)
+    print("Mean mask recall:", mean_recall_75)
+    mean_precision_75 = mean_precision_75 / (mean_precision_75 + false_positive_75)     #TODO precision è tutte le detection con IoU>80/tutte le detection (ok fatto perchè frame_count conta in realtà tutte le detection)
+    print("Mean mask precision:", mean_precision_75)
     #TODO accuracy è (tutte le IoU>50 ()o altro )/il numero di elementi in ground truth
-    mean_f1_score = 2 * (mean_precision * mean_recall) / (mean_precision + mean_recall)
+    mean_f1_score = 2 * (mean_precision_75 * mean_recall_75) / (mean_precision_75 + mean_recall_75)
     print("Mean mask F1 score:", mean_f1_score)
     #TODO la F1 score è 2*(precision*recall/(precision+recall))
 
     #FIXME da mettere i controlli per le divisioni per zero
-    return mean_IoU, mean_recall, mean_precision, mean_f1_score
+    return mean_IoU, mean_recall_75, mean_precision_75, mean_f1_score
 
-def calculate_accuracy_obstacles(temp_safe_obstacles_dir,temp_dangerous_obstacles_dir):
-    mean_precision = 0.0
+def calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir,temp_dangerous_obstacles_dir):
+    #TODO fai solo le metriche con gli ostacoli separati
+    mean_precision_75 = 0.0
+    false_positive_75 = 0.0
     mean_IoU = 0.0
-    frame_count = 0
+    true_positive_count = 0
+    true_negative_count = 0
+    false_positive_count = 0
+    false_negative_count = 0
 
-    #TODO calcolare le metriche per: safe e danger insieme quindi la accuracy di detection in generale, poi la classification accuracy tra danger e safe
-    temp_main_railway_dir = os.path.join("ground_truth/temp_obstacles")
-    os.makedirs(temp_main_railway_dir, exist_ok=True)
+    if not isinstance(temp_safe_obstacles_dir, str) or not os.path.isdir(temp_safe_obstacles_dir):
+        print(f"[calculate_accuracy] Detected masks directory not found or invalid: {temp_safe_obstacles_dir}")
+        return
 
-    safe_obstacles_directory = os.path.join("ground_truth/safe_obstacles")
-    danger_obstacles_directory = os.path.join("ground_truth/dangerous_obstacles")
+    if not isinstance(temp_dangerous_obstacles_dir, str) or not os.path.isdir(temp_dangerous_obstacles_dir):
+        print(f"[calculate_accuracy] Detected masks directory not found or invalid: {temp_dangerous_obstacles_dir}")
+        return
 
-    frame_count = 0
+    gt_safe_dir = "./ground_truth/safe_obstacles"
+    if not os.path.isdir(gt_safe_dir):
+        print(f"[calculate_accuracy] Ground truth directory not found: {gt_safe_dir}")
+        return
 
-    safe_files = sorted(os.listdir(safe_obstacles_directory))
-    dangerous_files = sorted(os.listdir(danger_obstacles_directory))
-    last_safe_element = safe_files[-1]
-    last_dangerous_element = dangerous_files[-1]
-    frame_count_s = int(last_safe_element.split("_")[1].split(".")[0])
-    frame_count_d = int(last_dangerous_element.split("_")[1].split(".")[0])
-    if frame_count_s>frame_count_d:
-        frame_count = frame_count_s
-    else:
-        frame_count = frame_count_d
-    for i in range(frame_count):
-        if int(safe_files[i].split("_")[1].split(".")[0])==i:
-            if int(dangerous_files[i].split("_")[1].split(".")[0])==i:
-                safe_file_path = os.path.join(safe_obstacles_directory, safe_files[i])
-                danger_file_path = os.path.join(danger_obstacles_directory, dangerous_files[i])
-                safe_mask = cv2.imread(safe_file_path, cv2.IMREAD_GRAYSCALE)
-                danger_mask = cv2.imread(danger_file_path, cv2.IMREAD_GRAYSCALE)
-                safe_mask = cv2.threshold(safe_mask, 0, 255, cv2.THRESH_BINARY)[1]
-                danger_mask = cv2.threshold(danger_mask, 0, 255, cv2.THRESH_BINARY)[1]
-                safe_mask = safe_mask.astype(np.uint8).squeeze()
-                danger_mask = danger_mask.astype(np.uint8).squeeze()
-                safe_mask_image = cv2.cvtColor(safe_mask, cv2.COLOR_GRAY2BGR)
-                danger_mask_image = cv2.cvtColor(danger_mask, cv2.COLOR_GRAY2BGR)
-                #TODO crea un file unico con i due e salvalo in temp obstacles
+    gt_safe_files = sorted(os.listdir(gt_safe_dir))
+    if not gt_safe_files:
+        print(f"[calculate_accuracy] No ground truth files found in: {gt_safe_files}")
+        return
+
+    gt_danger_dir = "./ground_truth/danger_obstacles"
+    if not os.path.isdir(gt_danger_dir):
+        print(f"[calculate_accuracy] Ground truth directory not found: {gt_danger_dir}")
+        return
+
+    gt_danger_files = sorted(os.listdir(gt_danger_dir))
+    if not gt_danger_files:
+        print(f"[calculate_accuracy] No ground truth files found in: {gt_danger_files}")
+        return
+
+    # Consider common image extensions
+    valid_exts = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+
+    safe_files = sorted(
+        f for f in os.listdir(temp_safe_obstacles_dir)
+        if os.path.isfile(os.path.join(temp_safe_obstacles_dir, f)) and os.path.splitext(f.lower())[-1] in valid_exts
+    )
+
+    if not safe_files:
+        print(f"[calculate_accuracy] No detected mask files found in: {safe_files}")
+        return
+
+    danger_files = sorted(
+        f for f in os.listdir(temp_dangerous_obstacles_dir)
+        if os.path.isfile(os.path.join(temp_dangerous_obstacles_dir, f)) and os.path.splitext(f.lower())[-1] in valid_exts
+    )
+
+    if not danger_files:
+        print(f"[calculate_accuracy] No detected mask files found in: {danger_files}")
+        return
+
+    frame_idx = 0
+
+    for frame_idx in range(number_of_frames):
+        #TODO faccio la intersezione tra la detected e quelli della gt
+        #TODO lo faccio per le due cartelle safe e danger
+
+        #TODO  da fare la capacità di classificare gli ostacoli come safe o danger
+        all_detected_safe_obstacles_files = [e for e in safe_files if int(e.split("_")[1].split(".")[0]) == frame_idx]
+        all_detected_danger_obstacles_files = [e for e in danger_files if int(e.split("_")[1].split(".")[0]) == frame_idx]
+        gt_safe_image = cv2.imread(os.path.join(gt_safe_dir, f"frame_{frame_idx:06d}.png"))
+        gt_danger_image = cv2.imread(os.path.join(gt_danger_dir, f"frame_{frame_idx:06d}.png"))
+        gt_safe_image = gt_safe_image.astype(np.uint8)
+        gt_danger_image = gt_danger_image.astype(np.uint8)
+
+        if len(all_detected_safe_obstacles_files)==0 and len(all_detected_danger_obstacles_files)==0 and gt_safe_image is None and gt_danger_image is None:
+            true_negative_count+=1
+        elif len(all_detected_safe_obstacles_files)!=0 or len(all_detected_danger_obstacles_files)!=0 and gt_safe_image is None and gt_danger_image is None:
+            false_positive_75+=1
+        elif gt_safe_image is not None and gt_danger_image is None:
+            '''
+            detected_safe_intersection_pixel_count=0
+            for detected_safe_obstacle_file in all_detected_safe_obstacles_files:
+                detected_safe_obstacle_image = cv2.imread(os.path.join(temp_safe_obstacles_dir,detected_safe_obstacle_file),cv2.IMREAD_GRAYSCALE)
+                detected_safe_obstacle_image = detected_safe_obstacle_image.astype(np.uint8).squeeze()
+
+                flat = gt_safe_image.reshape(-1, 3)
+                colors = np.unique(flat, axis=0)
+                # Exclude black
+                colors = [tuple(c.tolist()) for c in colors if not np.all(c == 0)]
+
+                gt_safe_masks = []
+                for color in colors:
+                    color_np = np.array(color, dtype=np.uint8)
+                    # Binary mask for exact color
+                    mask = cv2.inRange(gt_safe_image, color_np, color_np)  # 255 where pixel == color
+                    gt_safe_masks.append(mask)
+                    if cv2.countNonZero(mask) == 0:
+                        continue  # Skip empty (in case of numerical quirks)
+
+                maximum_intersection_px_count = 0
+                for mask in gt_safe_masks:
+                    intersection = cv2.bitwise_and(detected_safe_obstacle_image, mask)
+                    temp_px_count = cv2.countNonZero(intersection)
+                    if temp_px_count > maximum_intersection_px_count:
+                        maximum_intersection_px_count = temp_px_count
+
+                detected_safe_intersection_pixel_count = maximum_intersection_px_count
+            '''
+
+            safe_mask, detected_safe_intersection_pixel_count = calculate_maximum_intersection_affinity(all_detected_safe_obstacles_files, temp_safe_obstacles_dir, gt_safe_image)
+            danger_mask, detected_danger_intersection_pixel_count = calculate_maximum_intersection_affinity(all_detected_danger_obstacles_files, temp_dangerous_obstacles_dir, gt_safe_image)
+            if detected_safe_intersection_pixel_count>detected_danger_intersection_pixel_count:
+                mask = safe_mask
             else:
-                #TODO salva nella directory temp obstacles solo il file con il frame corretto
-                print("leggi todo")
+                mask = danger_mask
+
+
+
+        elif gt_safe_image is None and gt_danger_image is not None:
+
+        elif gt_safe_image is not None and gt_danger_image is not None:
+
+def calculate_maximum_intersection_affinity(all_detected_files,temp_obstacle_dir,gt_image):
+    #FIXME guarda le chiamate del metodo, sono sbagliate perchè cicla su i detected e invece devo ottenere non so cosa da capire
+    result_mask = None
+    maximum_intersection_px_count = 0
+    for detected_obstacle_file in all_detected_files:
+        detected_obstacle_image = cv2.imread(os.path.join(temp_obstacle_dir, detected_obstacle_file),cv2.IMREAD_GRAYSCALE)
+        detected_obstacle_image = detected_obstacle_image.astype(np.uint8).squeeze()
+
+        flat = gt_image.reshape(-1, 3)
+        colors = np.unique(flat, axis=0)
+        # Exclude black
+        colors = [tuple(c.tolist()) for c in colors if not np.all(c == 0)]
+
+        gt_safe_masks = []
+        for color in colors:
+            color_np = np.array(color, dtype=np.uint8)
+            # Binary mask for exact color
+            mask = cv2.inRange(gt_image, color_np, color_np)  # 255 where pixel == color
+            gt_safe_masks.append(mask)
+            if cv2.countNonZero(mask) == 0:
+                continue  # Skip empty (in case of numerical quirks)
+
+        for mask in gt_safe_masks:
+            intersection = cv2.bitwise_and(detected_obstacle_image, mask)
+            temp_px_count = cv2.countNonZero(intersection)
+            if temp_px_count > maximum_intersection_px_count:
+                maximum_intersection_px_count = temp_px_count
+                result_mask = mask
+
+    return result_mask, maximum_intersection_px_count

@@ -51,31 +51,7 @@ def show_mask(mask, ax, random_color=False, borders=True):
     ax.imshow(mask_image)
 
 
-def show_mask_v(mask, ax, save_fig, frame_idx, obj_id=None, random_color=False):
-    if random_color:
-        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
-    else:
-        cmap = plt.get_cmap("tab10")
-        cmap_idx = 0 if obj_id is None else obj_id
-        color = np.array([*cmap(cmap_idx + 1)[:3], 0.6])
-    h, w = mask.shape[-2:]
-    # mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-    mask = mask.astype(np.float32).reshape(h, w)  # ensure float32 2D
 
-    # RGBA image for display with matplotlib (still fine)
-    mask_image_rgba = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-
-    if save_fig:
-        # Build a 3-channel BGR image on black background for OpenCV/JPEG
-        rgb = (color[:3] * 255).astype(np.uint8)  # the solid color for the mask
-        out_bgr = np.zeros((h, w, 3), dtype=np.uint8)
-        m = mask > 0  # boolean mask
-        out_bgr[m] = rgb[::-1]  # convert RGB -> BGR
-
-        cv2.imwrite(os.path.join("./temp_main_railway/", f"railway_{frame_idx:06d}.jpg"), out_bgr)
-    ax.imshow(mask_image_rgba)
-    ax.axis('off')
-    # plt.savefig(f"./seg_frames_2/{str(frame_name)}.jpg", bbox_inches='tight', pad_inches=0)
 
 
 def show_points(coords, labels, ax, marker_size=200):
@@ -937,6 +913,31 @@ def refine_mask(mask, previous_mask=None):
     a = black_image.astype(bool)
     return a
 
+def show_mask_v(mask, ax, save_fig, frame_idx, obj_id=None, random_color=False):
+    if random_color:
+        color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
+    else:
+        cmap = plt.get_cmap("tab10")
+        cmap_idx = 0 if obj_id is None else obj_id
+        color = np.array([*cmap(cmap_idx + 1)[:3], 0.6])
+    h, w = mask.shape[-2:]
+    # mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+    mask = mask.astype(np.float32).reshape(h, w)  # ensure float32 2D
+
+    # RGBA image for display with matplotlib (still fine)
+    mask_image_rgba = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
+
+    if save_fig:
+        # Build a 3-channel BGR image on black background for OpenCV/JPEG
+        rgb = (color[:3] * 255).astype(np.uint8)  # the solid color for the mask
+        out_bgr = np.zeros((h, w, 3), dtype=np.uint8)
+        m = mask > 0  # boolean mask
+        out_bgr[m] = rgb[::-1]  # convert RGB -> BGR
+
+        cv2.imwrite(os.path.join("./temp_main_railway/", f"railway_{frame_idx:06d}.jpg"), out_bgr)
+    ax.imshow(mask_image_rgba)
+    ax.axis('off')
+    # plt.savefig(f"./seg_frames_2/{str(frame_name)}.jpg", bbox_inches='tight', pad_inches=0)
 
 def show_anomalies(mask, ax, rail_mask, save_fig, obj_id, frame_idx):
     # FIXME infatti se per esempio una persona è in piedi accanto ai binari ma è alta e il binario cirva in lontananza dietro la persona diventa arancione ma non è giusto
@@ -1182,10 +1183,16 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
 def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir):
     # TODO fai solo le metriche con gli ostacoli separati
     mean_precision_75 = 0.0
+    true_positive_75 = 0.0
     false_positive_75 = 0.0
     mean_IoU = 0.0
     true_negative_count = 0
     false_negative_count = 0
+
+    total_obstacles_gt_count = 0
+    total_detected_safe_obstacles_count = 0
+    total_detected_dangerous_obstacles_count = 0
+
 
     true_safe = 0
     true_dangerous = 0
@@ -1257,6 +1264,104 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
         gt_safe_image = gt_safe_image.astype(np.uint8)
         gt_danger_image = gt_danger_image.astype(np.uint8)
 
+        all_gt_safe_masks = extract_masks_from_image(gt_safe_image)
+        all_gt_danger_masks = extract_masks_from_image(gt_danger_image)
+
+        temp_mean_IoU = 0
+        temp_true_positive_75 = 0
+        temp_false_positive_75 = 0
+        temp_false_negative_count = 0
+        temp_true_safe = 0
+        temp_false_dangerous = 0
+
+        for gt_safe_mask in all_gt_safe_masks:
+            safe_intersection_px_count, safe_union_px_count = calculate_maximum_intersection_affinity(all_detected_safe_obstacles_files, gt_safe_mask, temp_safe_obstacles_dir)
+            danger_intersection_px_count, danger_union_px_count = calculate_maximum_intersection_affinity(all_detected_danger_obstacles_files, gt_safe_mask, temp_dangerous_obstacles_dir)
+
+            intersection_px_count = 0
+            union_px_count = 0
+            is_safe = True
+            if safe_intersection_px_count > danger_intersection_px_count:
+                intersection_px_count = safe_intersection_px_count
+                union_px_count = safe_union_px_count
+            else:
+                is_safe = False
+                intersection_px_count = danger_intersection_px_count
+                union_px_count = danger_union_px_count
+            if union_px_count == 0:
+                temp_false_negative_count +=1
+            else:
+                IoU = intersection_px_count / union_px_count
+                temp_mean_IoU += IoU
+                if IoU > 0.1:
+                    temp_true_positive_75 += 1
+                    if is_safe:
+                        temp_true_safe += 1
+                    else:
+                        temp_false_dangerous += 1
+                else:
+                    temp_false_positive_75 += 1
+
+        safe_gt_count = len(all_gt_safe_masks)
+        if safe_gt_count != 0:
+            mean_IoU += (temp_mean_IoU/(temp_true_positive_75+temp_false_positive_75+temp_false_negative_count))
+            true_positive_75 += temp_true_positive_75 / safe_gt_count
+            false_positive_75 += temp_false_positive_75 / safe_gt_count
+            false_negative_count += temp_false_negative_count / safe_gt_count
+            true_safe += temp_true_safe / safe_gt_count
+            false_dangerous += temp_false_dangerous / safe_gt_count
+
+        temp_false_negative_count = 0
+        temp_true_positive_75 = 0
+        temp_mean_IoU = 0
+        temp_false_positive_75 = 0
+        temp_true_danger = 0
+        temp_false_safe = 0
+
+        for gt_danger_mask in all_gt_danger_masks:
+            safe_intersection_px_count, safe_union_px_count = calculate_maximum_intersection_affinity(
+                all_detected_safe_obstacles_files, gt_danger_mask, temp_safe_obstacles_dir)
+            danger_intersection_px_count, danger_union_px_count = calculate_maximum_intersection_affinity(
+                all_detected_danger_obstacles_files, gt_danger_mask, temp_dangerous_obstacles_dir)
+
+            intersection_px_count = 0
+            union_px_count = 0
+            is_danger = True
+            if safe_intersection_px_count > danger_intersection_px_count:
+                is_danger = False
+                intersection_px_count = safe_intersection_px_count
+                union_px_count = safe_union_px_count
+            else:
+
+                intersection_px_count = danger_intersection_px_count
+                union_px_count = danger_union_px_count
+            if union_px_count == 0:
+                temp_false_negative_count +=1
+            else:
+                IoU = intersection_px_count / union_px_count
+                temp_mean_IoU += IoU
+                if IoU > 0.1:
+                    temp_true_positive_75 += 1
+                    if is_danger:
+                        temp_true_danger += 1
+                    else:
+                        temp_false_safe += 1
+                else:
+                    temp_false_positive_75 += 1
+
+        danger_gt_count = len(all_gt_danger_masks)
+        if danger_gt_count != 0:
+            mean_IoU+=(temp_mean_IoU/(temp_true_positive_75+temp_false_positive_75+temp_false_negative_count))
+            true_positive_75 += temp_true_positive_75 / danger_gt_count
+            false_positive_75 += temp_false_positive_75 / danger_gt_count
+            false_negative_count += temp_false_negative_count / danger_gt_count
+            true_dangerous += temp_true_danger / danger_gt_count
+            false_safe += temp_false_safe / danger_gt_count
+
+        if danger_gt_count!=0 and safe_gt_count!=0:
+            mean_IoU/=2
+
+        '''
         if len(all_detected_safe_obstacles_files) == 0 and len(
                 all_detected_danger_obstacles_files) == 0 and gt_safe_image is None and gt_danger_image is None:
             true_negative_count += 1
@@ -1265,35 +1370,7 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
         elif (len(all_detected_safe_obstacles_files) != 0 or len(all_detected_danger_obstacles_files) != 0) and gt_safe_image is None and gt_danger_image is None:
             false_positive_75 += 1
         elif (len(all_detected_safe_obstacles_files)!=0 or len(all_detected_danger_obstacles_files)==0) and (gt_safe_image is not None or gt_danger_image is not None):
-            '''
-            detected_safe_intersection_pixel_count=0
-            for detected_safe_obstacle_file in all_detected_safe_obstacles_files:
-                detected_safe_obstacle_image = cv2.imread(os.path.join(temp_safe_obstacles_dir,detected_safe_obstacle_file),cv2.IMREAD_GRAYSCALE)
-                detected_safe_obstacle_image = detected_safe_obstacle_image.astype(np.uint8).squeeze()
 
-                flat = gt_safe_image.reshape(-1, 3)
-                colors = np.unique(flat, axis=0)
-                # Exclude black
-                colors = [tuple(c.tolist()) for c in colors if not np.all(c == 0)]
-
-                gt_safe_masks = []
-                for color in colors:
-                    color_np = np.array(color, dtype=np.uint8)
-                    # Binary mask for exact color
-                    mask = cv2.inRange(gt_safe_image, color_np, color_np)  # 255 where pixel == color
-                    gt_safe_masks.append(mask)
-                    if cv2.countNonZero(mask) == 0:
-                        continue  # Skip empty (in case of numerical quirks)
-
-                maximum_intersection_px_count = 0
-                for mask in gt_safe_masks:
-                    intersection = cv2.bitwise_and(detected_safe_obstacle_image, mask)
-                    temp_px_count = cv2.countNonZero(intersection)
-                    if temp_px_count > maximum_intersection_px_count:
-                        maximum_intersection_px_count = temp_px_count
-
-                detected_safe_intersection_pixel_count = maximum_intersection_px_count
-            '''
             #FIXME da mettere in un metdo sta roba
             gt_safe_mask = None
             gt_safe_maximum_intersection_count = 0
@@ -1318,16 +1395,19 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 else:
                     intersection_px_count = gt_danger_maximum_intersection_count
                     is_safe = False
-                IoU = intersection_px_count / union_px_count
-                temp_mean_IoU += IoU
-                if IoU > 0.1:
-                    if is_safe:
-                        temp_true_safe += 1
-                    else:
-                        temp_false_dangerous += 1
-                    temp_mean_precision_75 += 1
+                if intersection_px_count == 0:
+                    false_positive_75 += 1
                 else:
-                    temp_false_positive_75 += 1
+                    IoU = intersection_px_count / union_px_count
+                    temp_mean_IoU += IoU
+                    if IoU > 0.1:
+                        if is_safe:
+                            temp_true_safe += 1
+                        else:
+                            temp_false_dangerous += 1
+                        temp_mean_precision_75 += 1
+                    else:
+                        temp_false_positive_75 += 1
             safe_obstacle_count = len(all_detected_safe_obstacles_files)
             if safe_obstacle_count != 0:
                 mean_IoU+=temp_mean_IoU/safe_obstacle_count
@@ -1355,19 +1435,20 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                     is_danger = False
                 else:
                     intersection_px_count = gt_danger_maximum_intersection_count
-                print("intersection px count", intersection_px_count)
-                print("union px count", union_px_count)
-                IoU = intersection_px_count / union_px_count
-                temp_mean_IoU += IoU
-                if IoU > 0.1:
-                    if is_danger:
-                        temp_true_dangerous += 1
-                    else:
-                        temp_false_safe += 1
-
-                    temp_mean_precision_75 += 1
+                if intersection_px_count == 0:
+                    false_positive_75 += 1
                 else:
-                    temp_false_positive_75 += 1
+                    IoU = intersection_px_count / union_px_count
+                    temp_mean_IoU += IoU
+                    if IoU > 0.1:
+                        if is_danger:
+                            temp_true_dangerous += 1
+                        else:
+                            temp_false_safe += 1
+
+                        temp_mean_precision_75 += 1
+                    else:
+                        temp_false_positive_75 += 1
 
             danger_obstacle_count = len(all_detected_danger_obstacles_files)
             if danger_obstacle_count != 0:
@@ -1376,54 +1457,60 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 false_positive_75 += temp_false_positive_75 / danger_obstacle_count
                 false_dangerous += temp_false_dangerous / danger_obstacle_count
                 true_dangerous += temp_true_dangerous / danger_obstacle_count
+        '''
 
-    mean_IoU = mean_IoU / (mean_precision_75 + false_negative_count + false_positive_75)
+    #FIXME il false negative non funziona perchè dovrei fare il contrario: guardare la ground truth e trovare le maschere che non ci sono
+    print("mean IoU:", mean_IoU)
+    print("mean true_positive 75:", true_positive_75)
+    print("false positive 75:", false_positive_75)
+    print("false negative:", false_negative_count)
+    mean_IoU = mean_IoU / (true_positive_75 + false_negative_count + false_positive_75)
     print("Mean obstacles mask accuracy:", mean_IoU)
-    mean_recall_75 = mean_precision_75 / (mean_precision_75 + false_negative_count)
+    mean_recall_75 = true_positive_75 / (true_positive_75 + false_negative_count)
     print("Mean obstacles mask recall:", mean_recall_75)
-    mean_precision_75 = mean_precision_75 / (
-            mean_precision_75 + false_positive_75)  # TODO precision è tutte le detection con IoU>80/tutte le detection (ok fatto perchè frame_count conta in realtà tutte le detection)
+    mean_precision_75 = true_positive_75 / (
+            true_positive_75 + false_positive_75)  # TODO precision è tutte le detection con IoU>80/tutte le detection (ok fatto perchè frame_count conta in realtà tutte le detection)
     print("Mean obstacles mask precision:", mean_precision_75)
     # TODO accuracy è (tutte le IoU>50 ()o altro )/il numero di elementi in ground truth
     mean_f1_score = 2 * (mean_precision_75 * mean_recall_75) / (mean_precision_75 + mean_recall_75)
     print("Mean obstacles mask F1 score:", mean_f1_score)
     # TODO la F1 score è 2*(precision*recall/(precision+recall))
 
-    mean_true_safe = true_safe / (true_safe + false_dangerous)
+    mean_true_safe = true_safe / (true_safe + false_dangerous)  #FIXME da mettere +non rilevati ostacoli safe
     print("Mean obstacles true safe:", mean_true_safe)
-    mean_true_dangerous = true_dangerous / (true_dangerous + false_safe)
+    mean_true_dangerous = true_dangerous / (true_dangerous + false_safe)    #FIXME da mettere +non rilevati ostacoli dangerous
     print("Mean obstacles true dangerous:", mean_true_dangerous)
 
     # FIXME da mettere i controlli per le divisioni per zero
     return mean_IoU, mean_recall_75, mean_precision_75, mean_f1_score
 
-def calculate_maximum_intersection_affinity(detected_obstacle_image, gt_image):
-    # FIXME guarda le chiamate del metodo, sono sbagliate perchè cicla su i detected e invece devo ottenere non so cosa da capire
-    result_mask = None
-    maximum_intersection_px_count = 0
-    union_px_count = 0
 
-    flat = gt_image.reshape(-1, 3)
-    colors = np.unique(flat, axis=0)
+def calculate_maximum_intersection_affinity(all_detected_obstacles_files, gt_mask, temp_obstacles_dir):
+    intersection_px_count = 0
+    union_px_count = 0
+    max_file = None
+    gt_safe_mask = gt_mask.astype(np.uint8)
+    for detected_obstacle_file in all_detected_obstacles_files:
+        detected_obstacle_image = cv2.imread(os.path.join(temp_obstacles_dir, detected_obstacle_file),cv2.IMREAD_GRAYSCALE)
+        detected_obstacle_image = detected_obstacle_image.astype(np.uint8)
+        intersection = cv2.bitwise_and(detected_obstacle_image, gt_safe_mask)
+        temp_intersection_px_count = cv2.countNonZero(intersection)
+        if temp_intersection_px_count > intersection_px_count:
+            intersection_px_count = temp_intersection_px_count
+            union = cv2.bitwise_or(detected_obstacle_image, gt_safe_mask)
+            union_px_count = cv2.countNonZero(union)
+    return intersection_px_count, union_px_count
+
+def extract_masks_from_image(gt_safe_image):
+    all_gt_safe_images = []
+    flat_gt_safe_image = gt_safe_image.reshape(-1, 3)
+    colors = np.unique(flat_gt_safe_image, axis=0)
     # Exclude black
     colors = [tuple(c.tolist()) for c in colors if not np.all(c == 0)]
 
-    gt_safe_masks = []
     for color in colors:
         color_np = np.array(color, dtype=np.uint8)
         # Binary mask for exact color
-        mask = cv2.inRange(gt_image, color_np, color_np)  # 255 where pixel == color
-        gt_safe_masks.append(mask)
-        if cv2.countNonZero(mask) == 0:
-            continue  # Skip empty (in case of numerical quirks)
-
-    for mask in gt_safe_masks:
-        intersection = cv2.bitwise_and(detected_obstacle_image, mask)
-        temp_px_count = cv2.countNonZero(intersection)
-        if temp_px_count > maximum_intersection_px_count:
-            maximum_intersection_px_count = temp_px_count
-            union = cv2.bitwise_or(mask, detected_obstacle_image)
-            union_px_count = cv2.countNonZero(union)
-
-
-    return union_px_count, maximum_intersection_px_count
+        mask = cv2.inRange(gt_safe_image, color_np, color_np)  # 255 where pixel == color
+        all_gt_safe_images.append(mask)
+    return all_gt_safe_images

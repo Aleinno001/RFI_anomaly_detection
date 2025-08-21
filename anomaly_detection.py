@@ -470,15 +470,33 @@ def main():
                                     last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 
             #Removal of tracked masks that probably are not obstacles, but the same railway or other geometries in the image
-            for obj_id, mask in last_masks_rails.items():
+            idx_to_pop = []
+            #for obj_id, mask in last_masks_rails.items():
+            obj_id=1
+            while obj_id<=len(last_masks_rails):
+                mask = last_masks_rails[obj_id]
                 if  obj_id!=1 and ((not utility.is_mask_an_obstacle(mask, last_masks_rails[1], ground_box)) or utility.is_mask_duplicate(mask, obj_id, last_masks_rails)):
                     video_predictor_rails.remove_object(inference_state_rails, obj_id)
-                    last_masks_rails[obj_id] = np.zeros_like(mask)
-                    for i in range(obj_id, len(last_masks_rails)-1,1):
-                        if i!=len(last_masks_rails)-1:
-                            last_masks_rails[i] = last_masks_rails[i+1]
-                        else:
-                            last_masks_rails.pop(i)
+                    last_masks_rails.pop(obj_id)
+
+                    new_d = {}
+                    for key in sorted(last_masks_rails.keys()):
+                        if key < obj_id:
+                            new_d[key] = last_masks_rails[key]
+                        elif key > obj_id:
+                            new_d[key - 1] = last_masks_rails[key]
+                        # key == k is dropped
+                    last_masks_rails = new_d
+                obj_id+=1
+
+                    #last_masks_rails[obj_id] = np.zeros_like(mask)
+                     #for i in range(obj_id, len(last_masks_rails),1):
+                        #if i!=len(last_masks_rails)-1:
+                            #last_masks_rails[i] = last_masks_rails[i+1]
+                        #else:
+                        #    last_masks_rails[i] = np.zeros_like(mask)
+            #for idx in idx_to_pop:
+            #    last_masks_rails.
 
             # Create visualization
             plt.figure(figsize=(8, 6))

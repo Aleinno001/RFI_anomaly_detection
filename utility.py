@@ -1090,9 +1090,8 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     Args:
         temp_main_railway_dir: Directory where detected masks are stored, named like "railway_XXXXXX.jpg/png".
     """
-    mean_IoU_rails, mean_recall_rails, mean_precision_rails, mean_f1_score_rails = calculate_accuracy_main_railway(
-        number_of_frames, temp_main_railway_dir)
-    calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
+    mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails = calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir)
+    mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles =calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
 
     #TODO da fare il plotting
 
@@ -1182,12 +1181,11 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
 
 def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir):
     # TODO fai solo le metriche con gli ostacoli separati
-    mean_precision_75 = 0.0
     true_positive = 0.0
     false_positive = 0.0
-    mean_IoU = 0.0
     true_negative = 0
     false_negative = 0
+    mean_IoU = 0.0
 
     IoU_frames_count = 0
 
@@ -1294,17 +1292,11 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
         all_gt_safe_masks = extract_masks_from_image(gt_safe_image)
         all_gt_danger_masks = extract_masks_from_image(gt_danger_image)
 
-        temp_mean_IoU = 0
-        temp_true_safe = 0
-        temp_false_dangerous = 0
-
         for gt_safe_mask in all_gt_safe_masks:
             safe_intersection_px_count, safe_union_px_count, safe_index = calculate_maximum_intersection_affinity(
                 all_detected_safe_obstacles_images, gt_safe_mask)
             danger_intersection_px_count, danger_union_px_count, danger_index = calculate_maximum_intersection_affinity(
                 all_detected_danger_obstacles_images, gt_safe_mask)
-            intersection_px_count = 0
-            union_px_count = 0
             is_safe = True
             if safe_intersection_px_count > danger_intersection_px_count:
                 intersection_px_count = safe_intersection_px_count
@@ -1323,9 +1315,9 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 if IoU > 0.5:
                     true_positive += 1
                     if is_safe:
-                        temp_true_safe += 1
+                        true_safe += 1
                     else:
-                        temp_false_dangerous += 1
+                        false_dangerous += 1
                 else:
                     false_negative += 1
 
@@ -1334,15 +1326,13 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 all_detected_safe_obstacles_images, gt_danger_mask)
             danger_intersection_px_count, danger_union_px_count, danger_index = calculate_maximum_intersection_affinity(
                 all_detected_danger_obstacles_images, gt_danger_mask)
-            intersection_px_count = 0
-            union_px_count = 0
             is_dangerous = True
             if safe_intersection_px_count > danger_intersection_px_count:
+                is_dangerous = False
                 intersection_px_count = safe_intersection_px_count
                 union_px_count = safe_union_px_count
                 all_detected_safe_obstacles_images[safe_index][1] = True
             else:
-                is_dangerous = False
                 intersection_px_count = danger_intersection_px_count
                 union_px_count = danger_union_px_count
                 all_detected_danger_obstacles_images[danger_index][1] = True
@@ -1353,9 +1343,9 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 if IoU > 0.5:
                     true_positive += 1
                     if is_dangerous:
-                        temp_true_safe += 1
+                        true_dangerous += 1
                     else:
-                        temp_false_dangerous += 1
+                        false_safe += 1
                 else:
                     false_negative += 1
 
@@ -1556,31 +1546,31 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 true_dangerous += temp_true_dangerous / danger_obstacle_count
         '''
 
-    print("medio true positive", true_positive/frame_idx)
-    print("medio false positive", false_positive/frame_idx)
-    print("medio false negative", false_negative/frame_idx)
-
     #TODO da controllare che non ci siano divisioni per 0, perche se la treshold di IoU è troppo alta fa tutto zero
 
     #FIXME il false negative non funziona perchè dovrei fare il contrario: guardare la ground truth e trovare le maschere che non ci sono
     mean_IoU = mean_IoU / IoU_frames_count
     print("Mean obstacles mask accuracy:", mean_IoU)
-    mean_recall_75 = true_positive / (true_positive + false_negative)
-    print("Mean obstacles mask recall:", mean_recall_75)
-    mean_precision_75 = true_positive / (true_positive + false_positive)  # TODO precision è tutte le detection con IoU>80/tutte le detection (ok fatto perchè frame_count conta in realtà tutte le detection)
-    print("Mean obstacles mask precision:", mean_precision_75)
+    mean_recall_50 = true_positive / (true_positive + false_negative)
+    print("Mean obstacles mask recall:", mean_recall_50)
+    mean_precision_50 = true_positive / (true_positive + false_positive)  # TODO precision è tutte le detection con IoU>80/tutte le detection (ok fatto perchè frame_count conta in realtà tutte le detection)
+    print("Mean obstacles mask precision:", mean_precision_50)
     # TODO accuracy è (tutte le IoU>50 ()o altro )/il numero di elementi in ground truth
-    mean_f1_score = 2 * (mean_precision_75 * mean_recall_75) / (mean_precision_75 + mean_recall_75)
+    mean_f1_score = 2 * (mean_precision_50 * mean_recall_50) / (mean_precision_50 + mean_recall_50)
     print("Mean obstacles mask F1 score:", mean_f1_score)
     # TODO la F1 score è 2*(precision*recall/(precision+recall))
 
-    #mean_true_safe = true_safe / (true_safe + false_dangerous)  #FIXME da mettere +non rilevati ostacoli safe
-    #print("Mean obstacles true safe:", mean_true_safe)
-    #mean_true_dangerous = true_dangerous / (true_dangerous + false_safe)    #FIXME da mettere +non rilevati ostacoli dangerous
-    #print("Mean obstacles true dangerous:", mean_true_dangerous)
+    mean_true_safe_recall = true_safe / (true_safe + false_dangerous)  #FIXME da mettere +non rilevati ostacoli safe
+    print("Mean obstacles true safe recall:", mean_true_safe_recall)
+    mean_true_dangerous_recall = true_dangerous / (true_dangerous + false_safe)    #FIXME da mettere +non rilevati ostacoli dangerous
+    print("Mean obstacles true dangerous recall:", mean_true_dangerous_recall)
+    mean_true_safe_precision = true_safe / (true_safe + false_safe)
+    print("Mean obstacles true safe precision:", mean_true_safe_precision)
+    mean_true_dangerous_precision = true_dangerous / (true_dangerous + false_dangerous)
+    print("Mean obstacles true dangerous precision:", mean_true_dangerous_precision)
 
     # FIXME da mettere i controlli per le divisioni per zero
-    return mean_IoU, mean_recall_75, mean_precision_75, mean_f1_score
+    return mean_IoU, mean_recall_50, mean_precision_50, mean_f1_score
 
 
 def calculate_maximum_intersection_affinity(all_detected_obstacles_files, gt_mask):

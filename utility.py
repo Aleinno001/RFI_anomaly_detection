@@ -1123,16 +1123,35 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
 
         plt.bar(index, IoU_distribution_railway, bar_width, alpha=opacity, color='blue', label='Railway IoU')
 
-        plt.bar(index + bar_width, IoU_distribution_obstacles, bar_width, alpha=opacity, color='yellow', label='Obstacles IoU')
-
-        plt.xlabel('IoU value')
+        plt.xlabel('IoU value Railway')
         plt.ylabel('Number of occurrences')
         plt.title('IoU distribution')
 
         # Create n_bins interval labels using n_bins + 1 edges
         edges = np.linspace(0, 1, n_bins + 1)
         labels = [f"{edges[i]:.2f}-{edges[i + 1]:.2f}" for i in range(n_bins)]
-        plt.xticks(index + bar_width/2, labels, rotation=45, ha='right')
+        plt.xticks(index, labels, rotation=45, ha='right')
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+
+    if IoU_distribution_obstacles is not None and len(IoU_distribution_obstacles) > 0:
+        n_bins = len(IoU_distribution_obstacles)
+        fig, ax = plt.subplots()
+        index = np.arange(n_bins)
+        bar_width = 0.35
+        opacity = 0.8
+
+        plt.bar(index, IoU_distribution_obstacles, bar_width, alpha=opacity, color='yellow',label='Obstacles IoU')
+
+        plt.xlabel('IoU value Obstacles')
+        plt.ylabel('Number of occurrences')
+        plt.title('IoU distribution')
+
+        # Create n_bins interval labels using n_bins + 1 edges
+        edges = np.linspace(0, 1, n_bins + 1)
+        labels = [f"{edges[i]:.2f}-{edges[i + 1]:.2f}" for i in range(n_bins)]
+        plt.xticks(index, labels, rotation=45, ha='right')
         plt.legend()
         plt.tight_layout()
         plt.show()
@@ -1336,8 +1355,6 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
         gt_danger_image = cv2.imread(os.path.join(gt_danger_dir, f"frame_{frame_idx:06d}.png"))
         gt_safe_image = gt_safe_image.astype(np.uint8)
         gt_danger_image = gt_danger_image.astype(np.uint8)
-
-
 
         frame_IoU = calculate_frame_IoU(gt_safe_image, gt_danger_image, all_detected_safe_obstacles_files, temp_safe_obstacles_dir, all_detected_danger_obstacles_files, temp_dangerous_obstacles_dir)
         if frame_IoU != None:

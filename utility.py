@@ -844,7 +844,6 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
                     [savol_array[i][0] - int(current_y_in_rail_box * 1), savol_array[i][1]])
                 savol_array_expanded_negative.append(
                     [savol_array[i][0] + int(current_y_in_rail_box * 1), savol_array[i][1]])
-        # TODO guardando le maschere degli oggetti detectati e metto i punti negativi su di loro, e devo controllare che quelli verdi che hp messo non siano in essi
 
         # Removing positive points that are inside a detected object and adding negative points for the same objects
         for obj_id, mask in rails_masks.items():
@@ -873,7 +872,7 @@ def smooth_curve_from_points(rail_points_x, rail_points_y):
     rail_points_x = np.array(rail_points_x)
     rail_points_y = np.array(rail_points_y)
     coeffs = np.polyfit(rail_points_y, rail_points_x,
-                        deg=5)  # Polinomio di grado 3    #FIXME da decidere il grado più appropriato
+                        deg=5)  # Polinomio di grado 5
     poly = np.poly1d(coeffs)
     # Definizione di un intervallo più fitto per la curva
     y_smooth = np.linspace(rail_points_y.min(), rail_points_y.max(), 200)
@@ -973,7 +972,7 @@ def is_point_inside_box(point, box):
     y_max = int(box[3])
     result = True
     if y_min < point[
-        1] < y_max:  # FIXME la box del terreno non è ancora affidabile, potrei controllare solo la quota e non orizzontalmente
+        1] < y_max:
         result = True
     else:
         result = False
@@ -981,7 +980,7 @@ def is_point_inside_box(point, box):
 
 
 def is_mask_an_obstacle(mask, rail_mask,
-                        railway_box):  # FIXME se un oggetto è in prospettiva grosso allora viene tolto, sbagliato
+                        railway_box):
     result = True
     mask = np.array(mask, dtype=np.uint8)
     mask = mask.squeeze()
@@ -1045,47 +1044,10 @@ def is_mask_duplicate(mask, obj_id, last_masks_rails):
                 break
     return result
 
-
-'''
-def calculate_accuracy(temp_main_railway_dir):
-    #Come prima cosa faccio il confronto sulle rail
-    mean_detection_rate = 0
-    mean_mask_accuracy = 0
-    frame_count = 0
-    for file in os.listdir("./ground_truth/main_railway"):
-        frame_count += 1
-        ground_truth__railway_mask = cv2.imread(os.path.join("./ground_truth/main_railway", file))
-        ground_truth__railway_mask = cv2.cvtColor(ground_truth__railway_mask, cv2.COLOR_BGR2GRAY)
-        ground_truth__railway_mask = cv2.threshold(ground_truth__railway_mask, 0, 255, cv2.THRESH_BINARY)[1]
-        ground_truth__railway_mask = ground_truth__railway_mask.astype(np.uint8)
-        ground_truth__railway_mask = ground_truth__railway_mask.squeeze()
-        frame_idx = int((file.split("_")[1]).split(".")[0])
-        file_name = os.path.join(temp_main_railway_dir, f"railway_{frame_idx:06d}.jpg")
-        detected_railway_mask_image = cv2.imread(file_name)
-        cv2.imshow(detected_railway_mask_image)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        detected_railway_mask_image = cv2.cvtColor(detected_railway_mask_image, cv2.COLOR_BGR2GRAY)
-        detected_railway_mask_image = cv2.threshold(detected_railway_mask_image, 0, 255, cv2.THRESH_BINARY)[1]
-        detected_railway_mask_image = detected_railway_mask_image.astype(np.uint8)
-        detected_railway_mask_image = detected_railway_mask_image.squeeze()
-        #TODO intersezione, poi percentuale pixel int e ground è > di tot, in piu faccio l'opposto della intersezione e controllo non sia una percentuale troppo alta
-        intersection = cv2.bitwise_and(detected_railway_mask_image, ground_truth__railway_mask)
-        intersection_px_count = intersection.sum()
-        ground_truth_railway_mask_px_count = ground_truth__railway_mask.sum()
-        percentage_over_intersection = intersection_px_count/ground_truth_railway_mask_px_count
-        if percentage_over_intersection>0.5:
-            mean_detection_rate+=1
-    mean_detection_rate = mean_detection_rate/frame_count
-    print("Mean detection rate:",mean_detection_rate)
-'''
-
-
 def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir):
     mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway = calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir)
     mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles =calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
 
-    #TODO da fare il plotting
     # create plot comparison
     fig, ax = plt.subplots()
     index = np.arange(4)
@@ -1184,7 +1146,6 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     plt.show()
 
     #TODO faccio variare il livello di confidenza treshold e poi valuto per esempio i falsi negativi e i false positivi che in realtà sono stati scartati
-    #TODO IMPORTANTE mi conto per ogni IoU quante maschere e poi cosi lotto una curva distribuzione del valore di IoU delle maschere
 
 
 def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
@@ -1251,6 +1212,7 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
                 true_positive += 1
             else:
                 false_negative += 1
+
 
     mean_IoU = mean_IoU / (true_positive + false_negative + false_positive)
     print("Mean mask accuracy:", mean_IoU)

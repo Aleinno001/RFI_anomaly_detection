@@ -489,15 +489,6 @@ def main():
                     last_masks_rails = new_d
                 obj_id+=1
 
-                    #last_masks_rails[obj_id] = np.zeros_like(mask)
-                     #for i in range(obj_id, len(last_masks_rails),1):
-                        #if i!=len(last_masks_rails)-1:
-                            #last_masks_rails[i] = last_masks_rails[i+1]
-                        #else:
-                        #    last_masks_rails[i] = np.zeros_like(mask)
-            #for idx in idx_to_pop:
-            #    last_masks_rails.
-
             # Create visualization
             plt.figure(figsize=(8, 6))
             plt.imshow(frame_rgb)
@@ -507,7 +498,6 @@ def main():
                 os.makedirs(temp_safe_obstacles_dir, exist_ok=True)
                 os.makedirs(temp_dangerous_obstacles_dir, exist_ok=True)
             for obj_id, mask in last_masks_rails.items():
-                #utility.show_mask_v(mask, plt.gca(), obj_id=obj_id)
                 if obj_id != 1 and obj_id != 0:
                     utility.show_anomalies(mask,plt.gca(),rail_mask, True , obj_id,frame_idx) #FIXME al posto di True ci devo mettere args.accuracy_test
                 else:
@@ -531,7 +521,6 @@ def main():
             frame_idx += 1
 
             # Clear memory for next iteration
-            #del inference_state
             del inference_state_rails
             gc.collect()
             torch.cuda.empty_cache()

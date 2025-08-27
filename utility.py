@@ -1027,22 +1027,57 @@ def is_mask_an_obstacle(mask, rail_mask,
 
 
 def is_mask_duplicate(mask, obj_id, last_masks_rails):
-    result = False
-    mask = np.array(mask, dtype=np.uint8)
-    mask = mask.squeeze()
+    """
+    Returns True if `mask` overlaps significantly (IoU > 0.25) with any other mask in `last_masks_rails`
+    excluding the same obj_id and the 'rails' id (1). Robust to None entries and odd mask formats.
+    """
+    if mask is None:
+        return False
+
+    # Normalize current mask: squeeze to 2D, make binary uint8
+    mask = np.array(mask)
+    mask = np.squeeze(mask)
+    if mask.ndim != 2:
+        # Not a proper 2D mask, cannot compare reliably
+        return False
+    # Make binary 0/1, then uint8
+    mask = (mask > 0).astype(np.uint8)
+
     for last_obj_id, last_mask in last_masks_rails.items():
-        if last_obj_id != obj_id and last_obj_id != 1:
-            last_mask = np.array(last_mask, dtype=np.uint8)
-            last_mask = last_mask.squeeze()
-            intersection = cv2.bitwise_and(mask, last_mask)
-            intersection_px_count = intersection.sum()
-            union = cv2.bitwise_or(mask, last_mask)
-            union_px_count = union.sum()
-            IoU = intersection_px_count / union_px_count
-            if IoU>0.25:
-                result = True
-                break
-    return result
+        # Skip self and the rails id
+        if last_obj_id == obj_id or last_obj_id == 1:
+            continue
+        # Skip missing/cleared masks
+        if last_mask is None:
+            continue
+
+        # Normalize the other mask
+        lm = np.array(last_mask)
+        lm = np.squeeze(lm)
+        if lm.ndim != 2:
+            continue
+        lm = (lm > 0).astype(np.uint8)
+
+        # If shapes mismatch, skip to avoid accidental broadcasting or resize artifacts
+        if lm.shape != mask.shape:
+            continue
+
+        # Compute IoU safely
+        intersection = cv2.bitwise_and(mask, lm)
+        union = cv2.bitwise_or(mask, lm)
+        intersection_px_count = int(intersection.sum())
+        union_px_count = int(union.sum())
+
+        if union_px_count == 0:
+            # Both masks empty
+            continue
+
+        IoU = intersection_px_count / union_px_count
+        if IoU > 0.25:
+            return True
+
+    return False
+
 
 def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir):
     mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway = calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir)

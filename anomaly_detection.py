@@ -472,22 +472,23 @@ def main():
             #Removal of tracked masks that probably are not obstacles, but the same railway or other geometries in the image
             idx_to_pop = []
             #for obj_id, mask in last_masks_rails.items():
-            obj_id=1
-            while obj_id<=len(last_masks_rails):
-                mask = last_masks_rails[obj_id]
-                if  obj_id!=1 and ((not utility.is_mask_an_obstacle(mask, last_masks_rails[1], ground_box)) or utility.is_mask_duplicate(mask, obj_id, last_masks_rails)):
-                    video_predictor_rails.remove_object(inference_state_rails, obj_id)
-                    last_masks_rails.pop(obj_id)
 
-                    new_d = {}
-                    for key in sorted(last_masks_rails.keys()):
-                        if key < obj_id:
-                            new_d[key] = last_masks_rails[key]
-                        elif key > obj_id:
-                            new_d[key - 1] = last_masks_rails[key]
-                        # key == k is dropped
-                    last_masks_rails = new_d
-                obj_id+=1
+            for obj_id,mask in last_masks_rails.items():
+                if mask is not None:
+                    if  obj_id!=1 and ((not utility.is_mask_an_obstacle(mask, last_masks_rails[1], ground_box)) or utility.is_mask_duplicate(mask, obj_id, last_masks_rails)):
+                        video_predictor_rails.remove_object(inference_state_rails, obj_id)
+                        last_masks_rails[obj_id] = np.zeros((height, width), dtype=np.uint8)
+
+            obj_id = 0
+            last_masks_rails_to_show = {}
+            i=2
+            for obj_id, mask in last_masks_rails.items():
+                if mask.sum() > 0:
+                    if obj_id == 1:
+                        last_masks_rails_to_show[1] = mask
+                    else:
+                        last_masks_rails_to_show[i] = mask
+                        i+=1
 
             # Create visualization
             plt.figure(figsize=(8, 6))
@@ -497,7 +498,7 @@ def main():
                 os.makedirs(temp_main_railway_dir, exist_ok=True)
                 os.makedirs(temp_safe_obstacles_dir, exist_ok=True)
                 os.makedirs(temp_dangerous_obstacles_dir, exist_ok=True)
-            for obj_id, mask in last_masks_rails.items():
+            for obj_id, mask in last_masks_rails_to_show.items():
                 if obj_id != 1 and obj_id != 0:
                     utility.show_anomalies(mask,plt.gca(),rail_mask, True , obj_id,frame_idx) #FIXME al posto di True ci devo mettere args.accuracy_test
                 else:
@@ -508,7 +509,7 @@ def main():
                 key = cv2.waitKey(1)
                 if key == ord('q'):
                     raise KeyboardInterrupt
-            if False:  #to remove True in args.save_frames
+            if True:  #to remove True in args.save_frames
                 plt.savefig(os.path.join(args.output_path, f"frame_{frame_idx:06d}.jpg"))
 
             plt.close()

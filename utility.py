@@ -1080,6 +1080,9 @@ def is_mask_duplicate(mask, obj_id, last_masks_rails):
 
 
 def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir):
+    metric_result_dir = os.path.join("metric_result")
+    os.makedirs(metric_result_dir, exist_ok=True)
+
     mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway = calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir)
     mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles =calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
 
@@ -1110,6 +1113,8 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     plt.tight_layout()
     plt.show()
 
+    fig.savefig(metric_result_dir + "/comparison_plot.png")
+
     # create plot for IoU distribution
     if IoU_distribution_railway is not None and len(IoU_distribution_railway) > 0:
         n_bins = len(IoU_distribution_railway)
@@ -1132,6 +1137,8 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
         plt.tight_layout()
         plt.show()
 
+        fig.savefig(metric_result_dir + "/IoU_distribution_railway.png")
+
     if IoU_distribution_obstacles is not None and len(IoU_distribution_obstacles) > 0:
         n_bins = len(IoU_distribution_obstacles)
         fig, ax = plt.subplots()
@@ -1152,6 +1159,8 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
         plt.legend()
         plt.tight_layout()
         plt.show()
+
+        fig.savefig(metric_result_dir + "/IoU_distribution_obstacles.png")
 
     # create plot categorization
     fig, ax = plt.subplots()
@@ -1179,6 +1188,9 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
 
     plt.tight_layout()
     plt.show()
+
+    fig.savefig(metric_result_dir + "/categorization_plot.png")
+    plt.close()
 
     #TODO faccio variare il livello di confidenza treshold e poi valuto per esempio i falsi negativi e i false positivi che in realtà sono stati scartati
 
@@ -1370,12 +1382,14 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
             if safe_intersection_px_count > danger_intersection_px_count:
                 intersection_px_count = safe_intersection_px_count
                 union_px_count = safe_union_px_count
-                all_detected_safe_obstacles_images[safe_index][1] = True
+                if safe_index != None:
+                    all_detected_safe_obstacles_images[safe_index][1] = True
             else:
                 is_safe = False
                 intersection_px_count = danger_intersection_px_count
                 union_px_count = danger_union_px_count
-                all_detected_danger_obstacles_images[danger_index][1] = True
+                if danger_index != None:
+                    all_detected_danger_obstacles_images[danger_index][1] = True
             #Se union px count è zero per forza sono vuoti gli array della detection
             if union_px_count == 0:
                 false_negative+= 1
@@ -1401,11 +1415,13 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 is_dangerous = False
                 intersection_px_count = safe_intersection_px_count
                 union_px_count = safe_union_px_count
-                all_detected_safe_obstacles_images[safe_index][1] = True
+                if danger_index != None:
+                    all_detected_safe_obstacles_images[safe_index][1] = True
             else:
                 intersection_px_count = danger_intersection_px_count
                 union_px_count = danger_union_px_count
-                all_detected_danger_obstacles_images[danger_index][1] = True
+                if danger_index != None:
+                    all_detected_danger_obstacles_images[danger_index][1] = True
             if union_px_count == 0:
                 false_negative += 1
             else:

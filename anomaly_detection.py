@@ -166,8 +166,8 @@ def main():
     GROUND_PROMPT = "all railways. ground."
     BOX_TRESHOLD_RAILS = 0.25
     TEXT_TRESHOLD_RAILS = 0.15
-    BOX_TRESHOLD_OBSTACLES = 0.20 #40
-    TEXT_TRESHOLD_OBSTACLES = 0.40  #60
+    BOX_TRESHOLD_OBSTACLES = 0.40 #40
+    TEXT_TRESHOLD_OBSTACLES = 0.60  #60
     BOX_TRESHOLD_GROUND = 0.30
     TEXT_TRESHOLD_GROUND = 0.30
 
@@ -423,9 +423,9 @@ def main():
                         i+=1
 
                 # Check each detected object
-                for i, phrase in enumerate(phrases):
-                    if phrases[i] != 'one train track':
-                        x_min, y_min, x_max, y_max = dino_boxes[i]
+                for obj_idx, phrase in enumerate(phrases):
+                    if phrases[obj_idx] != 'one train track':
+                        x_min, y_min, x_max, y_max = dino_boxes[obj_idx]
                         center_x = (x_min + x_max) // 2
                         center_y = (y_min + y_max) // 2
 
@@ -439,7 +439,7 @@ def main():
                                 break
 
                         # Add new object if not already tracked and is inside the railway area
-                        if (not already_tracked) and utility.is_point_inside_box( [center_x,center_y],ground_box):
+                        if (not already_tracked) and utility.is_point_inside_box([center_x, center_y], ground_box):
                             ann_rail_id += 1
                             print(f"New object {ann_rail_id} detected at frame {frame_idx}")
 
@@ -451,8 +451,32 @@ def main():
                                 labels=np.array([1], np.int32),
                             )
 
-                            if not utility.is_mask_an_obstacle((out_mask_logits[i] > 0).cpu().numpy(), last_masks_rails[1],ground_box):
+                            # Convert out_obj_ids to numpy for indexing
+                            if hasattr(out_obj_ids, "cpu"):
+                                out_obj_ids_np = out_obj_ids.cpu().numpy()
+                            else:
+                                out_obj_ids_np = np.array(out_obj_ids)
+
+                            # Find index of the newly added object within out_obj_ids
+                            matches = np.where(out_obj_ids_np == ann_rail_id)[0]
+                            if len(matches) == 0:
+                                # Newly added object not present in outputs; clean up and skip
                                 video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)
+                                continue
+
+                            new_idx = int(matches[0])
+
+                            # Get new object's mask logits and convert to numpy
+                            new_mask_logits = out_mask_logits[new_idx]
+                            if hasattr(new_mask_logits, "cpu"):
+                                new_mask_np = (new_mask_logits > 0).cpu().numpy()
+                            else:
+                                new_mask_np = np.array(new_mask_logits > 0)
+
+                            # If not considered an obstacle, remove and skip
+                            if not utility.is_mask_an_obstacle(new_mask_np, last_masks_rails[1], ground_box):
+                                video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)
+                                continue
 
                             # Re-propagate with the new object
                             result_rails = next(video_predictor_rails.propagate_in_video(
@@ -462,12 +486,12 @@ def main():
                             _, out_obj_ids, out_mask_logits = result_rails
 
                             # Update masks dictionary
-                            for i, obj_id in enumerate(out_obj_ids):
+                            for j, obj_id in enumerate(out_obj_ids):
                                 if obj_id == 1:
-                                    last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])
-                                    #last_masks_rails[obj_id]=(out_mask_logits[i] > 0).cpu().numpy()
+                                    last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[j] > 0).cpu().numpy(),
+                                                                                  last_masks_rails[obj_id])
                                 else:
-                                    last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
+                                    last_masks_rails[obj_id] = (out_mask_logits[j] > 0).cpu().numpy()
 
             #Removal of tracked masks that probably are not obstacles, but the same railway or other geometries in the image
             idx_to_pop = []

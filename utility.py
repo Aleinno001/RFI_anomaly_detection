@@ -9,6 +9,12 @@ from torchvision.ops import box_convert
 from groundingdino.util.inference import load_image, predict, annotate
 from matplotlib import pyplot as plt
 
+def safe_div(numerator, denominator, default=0.0):
+    """
+    Safely divide two numbers. Returns `default` when denominator is zero.
+    Use this for metrics like precision/recall that can be undefined when the denominator is 0.
+    """
+    return numerator / denominator if denominator != 0 else default
 
 ## PLOTTING & SAVING
 
@@ -716,7 +722,6 @@ def extract_ground_points_and_labels(image_source, ground_gd_box):
 
     return points, labels
 
-
 def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):
     # Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
 
@@ -727,30 +732,23 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     # -----------------CANNY EDGES--------------------
     image_cropped = image_source[int(gd_box[1]):int(gd_box[3]), int(gd_box[0]):int(gd_box[2])]
     img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
-    # Blur the image for better edge detection
     img_blur = cv2.GaussianBlur(img_gray, (7, 7), 0)
-    # Canny Edge Detection
-    edges = cv2.Canny(image=img_blur, threshold1=60, threshold2=90)  # Canny Edge Detection
-    # FIXME Come fare per evitare che gli edges rilevati non siano altro che le rails?
-    # -----------------HUGS EDGES--------------------
+    edges = cv2.Canny(image=img_blur, threshold1=60, threshold2=90)
+
     x = int(gd_box[0])
     y = int(gd_box[1])
     hc = image_cropped.shape[0]
     wc = image_cropped.shape[1]
 
-    # Overlaps the edge detection of the cropped GD detection box onto the fullsize image, full black so that there are no other contours except the ones of Canny
     blacked_image = np.zeros_like(image_source)
     blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
     blacked_image[y:y + hc, x:x + wc] = edges
 
-    # Find contours from the edge image
     contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # Draw contours on a blank canvas (for visualization)
     output = np.zeros_like(blacked_image)
     cv2.drawContours(output, contours, -1, (255), 1)
 
-    # Filter meaningful curves by length or area
     meaningful_contours = [cnt for cnt in contours if cv2.arcLength(cnt, closed=False) > 200]
 
     overlay = image_source.copy()
@@ -760,8 +758,6 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
 
     mask_image = None
-    # Getting only the rail detection mask
-    # TODO visto che ho accesso alle maschere, devo mette i punti rossi dentro gli stacoli e i punti verdi toglierli se dentro le maschere
     for obj_id, mask in rails_masks.items():
         if obj_id == 1:
             h, w = mask.shape[-2:]
@@ -769,15 +765,10 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
             mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
             break
 
-    # ----------------Extracting some points from mask -------------------
-    # Creating a black image with only the curves of the mask
-
     black_and_mask = np.zeros_like(image_source)
     cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
 
-    # Here if previous mask was not calculated (ex. first frame), it tries to prompt some points centered in the rails
     if mask_image is None:
-        # Calculating three different "middle" points to get the center between rails
         gdbox_midde_point = x + int(gd_width / 2)
         image_midde_point = int(width / 2)
         average_points = []
@@ -791,22 +782,23 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
 
         if len(average_levels) > 0:
             edges_rails_midde_point = int(sum(average_points) / len(average_points))
-            # Faccio la media dei tre centri calcolati sopra
             average_midde_point = int((gdbox_midde_point + image_midde_point + edges_rails_midde_point) / 3)
         else:
             average_midde_point = int((gdbox_midde_point + image_midde_point) / 2)
 
-        points = []
-        points.append([average_midde_point, height - 10])
-        points.append([average_midde_point, height - 50])
-        points.append([average_midde_point - 20, height - 50])
-        points.append([average_midde_point + 20, height - 50])
-        points.append([average_midde_point, height - 90])
-        points.append([average_midde_point, height - 130])
-        points.append([average_midde_point + 20, height - 130])
-        points.append([average_midde_point - 20, height - 130])
-        points.append([average_midde_point, height - 170])
-        labels = np.ones(len(points))
+        points = [
+            [average_midde_point, height - 10],
+            [average_midde_point, height - 50],
+            [average_midde_point - 20, height - 50],
+            [average_midde_point + 20, height - 50],
+            [average_midde_point, height - 90],
+            [average_midde_point, height - 130],
+            [average_midde_point + 20, height - 130],
+            [average_midde_point - 20, height - 130],
+            [average_midde_point, height - 170],
+        ]
+        points = np.asarray(points, dtype=np.int32).reshape(-1, 2)
+        labels = np.ones(len(points), dtype=np.int32)
     else:
         x_mask_points = np.array([])
         mask_middle_points = np.array([])
@@ -823,47 +815,76 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
                 y_of_avg_array = np.append(y_of_avg_array, j)
             x_mask_points = np.array([])
 
-        # Calculating smooth curve
-        xhat = savgol_filter(avg_array, 10, 3)
-        savol_array = []
-        x_avg_array_filtered = np.array(xhat)
-        for i in range(len(y_of_avg_array)):
-            savol_array.append([x_avg_array_filtered[i], y_of_avg_array[i]])
+        # Calculating smooth curve with robust window selection
+        if len(avg_array) >= 5:
+            wl = min(11, len(avg_array))  # prefer up to 11
+            if wl % 2 == 0:
+                wl -= 1
+            wl = max(wl, 5)
+            poly = min(3, wl - 1)
+            xhat = savgol_filter(avg_array, wl, poly)
+            x_avg_array_filtered = np.asarray(xhat)
+        else:
+            # Not enough points for smoothing; fall back to raw averages
+            x_avg_array_filtered = np.asarray(avg_array)
 
-        # From curve generating point prompts at both sides
+        savol_array = []
+        for i in range(len(y_of_avg_array)):
+            savol_array.append([int(x_avg_array_filtered[i]), int(y_of_avg_array[i])])
+
         savol_array_left = savol_array.copy()
         savol_array_expanded = []
         savol_array_expanded_negative = []
         for i in range(len(savol_array)):
             if i > 0 and i < len(savol_array_left) - 1 and (i % 6) == 0:
-                # savol_array_expanded.append(savol_array[i])
-                current_y_in_rail_box = savol_array[i][1] - y
-                savol_array_expanded.append([savol_array[i][0] - int(current_y_in_rail_box * 0.12), savol_array[i][1]])
-                savol_array_expanded.append([savol_array[i][0] + int(current_y_in_rail_box * 0.12), savol_array[i][1]])
-                savol_array_expanded_negative.append(
-                    [savol_array[i][0] - int(current_y_in_rail_box * 1), savol_array[i][1]])
-                savol_array_expanded_negative.append(
-                    [savol_array[i][0] + int(current_y_in_rail_box * 1), savol_array[i][1]])
+                current_y_in_rail_box = int(savol_array[i][1] - y)
+                savol_array_expanded.append([int(savol_array[i][0] - int(current_y_in_rail_box * 0.12)), int(savol_array[i][1])])
+                savol_array_expanded.append([int(savol_array[i][0] + int(current_y_in_rail_box * 0.12)), int(savol_array[i][1])])
+                savol_array_expanded_negative.append([int(savol_array[i][0] - int(current_y_in_rail_box * 1.0)), int(savol_array[i][1])])
+                savol_array_expanded_negative.append([int(savol_array[i][0] + int(current_y_in_rail_box * 1.0)), int(savol_array[i][1])])
 
         # Removing positive points that are inside a detected object and adding negative points for the same objects
         for obj_id, mask in rails_masks.items():
             if obj_id != 1 and obj_id != 0:
                 h, w = mask.shape[-2:]
                 binary_mask = mask.reshape(h, w).astype(np.uint8)
-
                 color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
                 temp_mask_image = binary_mask[..., None] * color.reshape(1, 1, -1)
 
-                for p in savol_array_expanded[:]:  # Usa copia per evitare problemi di modifica durante iterazione
-                    if temp_mask_image[int(p[1]), int(p[0])].sum() > 0:
-                        savol_array_expanded.remove(p)
+                for p in savol_array_expanded[:]:
+                    px = int(p[0]); py = int(p[1])
+                    if 0 <= py < temp_mask_image.shape[0] and 0 <= px < temp_mask_image.shape[1]:
+                        if temp_mask_image[py, px].sum() > 0:
+                            savol_array_expanded.remove(p)
 
-        # FIXME controllare che ci siano punti verdi, è possibile che non ci siano, quindi usare la maschera calcolata precedentemente
-        points = np.array(np.concatenate((savol_array_expanded,
-                                          savol_array_expanded_negative)))  # FIXME se detecto un oggetto che è il binario stesso poi faccio il pop di tutti i punti verdi nel binario ed esplode
-        labels = np.ones(len(savol_array_expanded))
-        neg_labels = np.zeros(len(savol_array_expanded_negative))
-        labels = np.concatenate((labels, neg_labels))
+        # Ensure consistent 2D shapes for concatenation
+        pos_pts = np.asarray(savol_array_expanded, dtype=np.int32)
+        if pos_pts.size == 0:
+            pos_pts = pos_pts.reshape(0, 2)
+        else:
+            pos_pts = pos_pts.reshape(-1, 2)
+
+        neg_pts = np.asarray(savol_array_expanded_negative, dtype=np.int32)
+        if neg_pts.size == 0:
+            neg_pts = neg_pts.reshape(0, 2)
+        else:
+            neg_pts = neg_pts.reshape(-1, 2)
+
+        if len(pos_pts) == 0 and len(neg_pts) == 0:
+            # Fallback: centerline-based prompts to avoid empty points
+            average_midde_point = x + int(gd_width / 2)
+            points = np.asarray([
+                [average_midde_point, height - 10],
+                [average_midde_point, height - 50],
+                [average_midde_point, height - 90],
+            ], dtype=np.int32)
+            labels = np.ones(len(points), dtype=np.int32)
+        else:
+            points = np.vstack((pos_pts, neg_pts))
+            labels = np.concatenate((
+                np.ones(len(pos_pts), dtype=np.int32),
+                np.zeros(len(neg_pts), dtype=np.int32)
+            ))
 
     return points, labels
 
@@ -1083,8 +1104,62 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     metric_result_dir = os.path.join("metric_result")
     os.makedirs(metric_result_dir, exist_ok=True)
 
-    mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway = calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir)
-    mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles =calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
+    mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway, mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, mean_f1_score_at_IoU_levels_railway = calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir)
+    mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles, mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, mean_f1_score_at_IoU_levels_obstacles =calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
+
+    # Create IoU-precision curve plot railway
+    fig, ax = plt.subplots()
+    plt.plot(range(0,20), mean_precision_at_IoU_levels_railway, 'b-',
+             label='IoU-Precision curve')
+    plt.xlabel('IoU')
+    plt.ylabel('Precision')
+    plt.title('Precision-IoU Curve for Railway')
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    fig.savefig(os.path.join(metric_result_dir + "precision_IoU_curve_railway.png"))
+
+    #Create IoU-recall curve plot railway
+    fig, ax = plt.subplots()
+    plt.plot(range(0,20), mean_recall_at_IoU_levels_railway, 'b-',
+             label='IoU-Recall curve')
+    plt.xlabel('IoU')
+    plt.ylabel('Recall')
+    plt.title('Recall-IoU Curve for Railway')
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    fig.savefig(os.path.join(metric_result_dir + "recall_IoU_curve_railway.png"))
+
+    # Create precision-recall curve plot railway
+    fig, ax = plt.subplots()
+    plt.plot(mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, 'b-', label='Precision-Recall curve')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve at Different IoU Thresholds for Railway')
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    fig.savefig(os.path.join(metric_result_dir + "precision_recall_curve_railway.png"))
+
+    #Create precision-recall curve plot obstacles
+    fig, ax = plt.subplots()
+    plt.plot(mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, 'b-', label='Precision-Recall curve')
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Precision-Recall Curve at Different IoU Thresholds for Obstacles')
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    fig.savefig(os.path.join(metric_result_dir + "precision_recall_curve_obstacles.png"))
 
     # create plot comparison
     fig, ax = plt.subplots()
@@ -1203,6 +1278,9 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
     false_negative = 0
 
     IoU_ditribution = [0] * 20
+    
+    true_positive_at_IoU_levels = [0] * 20
+    false_negative_at_IoU_levels = [0] * 20
 
     if not isinstance(temp_main_railway_dir, str) or not os.path.isdir(temp_main_railway_dir):
         print(f"[calculate_accuracy] Detected masks directory not found or invalid: {temp_main_railway_dir}")
@@ -1255,23 +1333,39 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
             IoU = intersection_px_count / union_px_count
             mean_IoU += IoU
             IoU_ditribution[int(IoU * 10)*2] += 1
+            
+            IoU_level = int(IoU*100/5)
+            for l in range(0, IoU_level+1):
+                true_positive_at_IoU_levels[l] += 1
+            for l in range(IoU_level+1, 20):
+                false_negative_at_IoU_levels[l] += 1
+            
             if IoU > 0.75:
                 true_positive += 1
             else:
                 false_negative += 1
 
 
-    mean_IoU = mean_IoU / (true_positive + false_negative + false_positive)
+    mean_IoU = safe_div(mean_IoU , (true_positive + false_negative + false_positive))
     print("Mean mask accuracy:", mean_IoU)
-    mean_recall_75 = true_positive / (true_positive + false_negative)
+    mean_recall_75 = safe_div(true_positive , (true_positive + false_negative))
     print("Mean mask recall:", mean_recall_75)
-    mean_precision_75 = true_positive / (true_positive + false_positive)
+    mean_precision_75 = safe_div(true_positive , (true_positive + false_positive))
     print("Mean mask precision:", mean_precision_75)
-    mean_f1_score = 2 * (mean_precision_75 * mean_recall_75) / (mean_precision_75 + mean_recall_75)
+    mean_f1_score = 2 * safe_div((mean_precision_75 * mean_recall_75) , (mean_precision_75 + mean_recall_75))
     print("Mean mask F1 score:", mean_f1_score)
+    
+    mean_recall_at_IoU_levels = [0]*20
+    mean_precision_at_IoU_levels = [0]*20
+    mean_f1_score_at_IoU_levels = [0]*20
+    
+    for l in range(0,20):
+        mean_recall_at_IoU_levels[l] = safe_div(true_positive_at_IoU_levels[l] , (true_positive_at_IoU_levels[l] + false_negative_at_IoU_levels[l]))
+        mean_precision_at_IoU_levels[l] = safe_div(true_positive_at_IoU_levels[l],(true_positive_at_IoU_levels[l]+false_positive))
+        mean_f1_score_at_IoU_levels[l] = 2*safe_div((mean_precision_at_IoU_levels[l]*mean_recall_at_IoU_levels[l]),(mean_precision_at_IoU_levels[l]+mean_recall_at_IoU_levels[l]))
 
     # FIXME da mettere i controlli per le divisioni per zero
-    return mean_IoU, mean_recall_75, mean_precision_75, mean_f1_score, IoU_ditribution
+    return mean_IoU, mean_recall_75, mean_precision_75, mean_f1_score, IoU_ditribution, mean_recall_at_IoU_levels, mean_precision_at_IoU_levels, mean_f1_score_at_IoU_levels
 
 
 def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir):
@@ -1282,6 +1376,9 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
     mean_IoU = 0.0
 
     IoU_ditribution = [0] * 20
+
+    true_positive_at_IoU_levels = [0] * 20
+    false_negative_at_IoU_levels = [0] * 20
 
     IoU_frames_count = 0
 
@@ -1396,6 +1493,13 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
             else:
                 IoU = intersection_px_count / union_px_count
                 IoU_ditribution[int(IoU * 10) * 2] += 1
+
+                IoU_level = int(IoU * 100 / 5)
+                for l in range(0, IoU_level + 1):
+                    true_positive_at_IoU_levels[l] += 1
+                for l in range(IoU_level + 1, 20):
+                    false_negative_at_IoU_levels[l] += 1
+
                 if IoU > 0.5:
                     true_positive += 1
                     if is_safe:
@@ -1427,6 +1531,13 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
             else:
                 IoU = intersection_px_count / union_px_count
                 IoU_ditribution[int(IoU * 10) * 2] += 1
+
+                IoU_level = int(IoU * 100 / 5)
+                for l in range(0, IoU_level + 1):
+                    true_positive_at_IoU_levels[l] += 1
+                for l in range(IoU_level + 1, 20):
+                    false_negative_at_IoU_levels[l] += 1
+
                 if IoU > 0.5:
                     true_positive += 1
                     if is_dangerous:
@@ -1443,26 +1554,38 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 false_positive += 1
 
     #TODO da controllare che non ci siano divisioni per 0, perche se la treshold di IoU è troppo alta fa tutto zero
-    mean_IoU = mean_IoU / IoU_frames_count
+    mean_IoU = safe_div(mean_IoU , IoU_frames_count)
     print("Mean obstacles mask accuracy:", mean_IoU)
-    mean_recall_50 = true_positive / (true_positive + false_negative)
+    mean_recall_50 = safe_div(true_positive , (true_positive + false_negative))
     print("Mean obstacles mask recall:", mean_recall_50)
-    mean_precision_50 = true_positive / (true_positive + false_positive)
+    mean_precision_50 = safe_div(true_positive , (true_positive + false_positive))
     print("Mean obstacles mask precision:", mean_precision_50)
-    mean_f1_score = 2 * (mean_precision_50 * mean_recall_50) / (mean_precision_50 + mean_recall_50)
+    mean_f1_score = 2 * safe_div((mean_precision_50 * mean_recall_50) , (mean_precision_50 + mean_recall_50))
     print("Mean obstacles mask F1 score:", mean_f1_score)
 
-    mean_true_safe_recall = true_safe / (true_safe + false_dangerous)
+    mean_true_safe_recall = safe_div(true_safe , (true_safe + false_dangerous))
     print("Mean obstacles true safe recall:", mean_true_safe_recall)
-    mean_true_dangerous_recall = true_dangerous / (true_dangerous + false_safe)
+    mean_true_dangerous_recall = safe_div(true_dangerous , (true_dangerous + false_safe))
     print("Mean obstacles true dangerous recall:", mean_true_dangerous_recall)
-    mean_true_safe_precision = true_safe / (true_safe + false_safe)
+    mean_true_safe_precision = safe_div(true_safe , (true_safe + false_safe))
     print("Mean obstacles true safe precision:", mean_true_safe_precision)
-    mean_true_dangerous_precision = true_dangerous / (true_dangerous + false_dangerous)
+    mean_true_dangerous_precision = safe_div(true_dangerous , (true_dangerous + false_dangerous))
     print("Mean obstacles true dangerous precision:", mean_true_dangerous_precision)
 
+    mean_recall_at_IoU_levels = [0] * 20
+    mean_precision_at_IoU_levels = [0] * 20
+    mean_f1_score_at_IoU_levels = [0] * 20
+
+    for l in range(0, 20):
+        mean_recall_at_IoU_levels[l] = safe_div(true_positive_at_IoU_levels[l],
+                                                (true_positive_at_IoU_levels[l] + false_negative_at_IoU_levels[l]))
+        mean_precision_at_IoU_levels[l] = safe_div(true_positive_at_IoU_levels[l],
+                                                   (true_positive_at_IoU_levels[l] + false_positive))
+        mean_f1_score_at_IoU_levels[l] = 2 * safe_div((mean_precision_at_IoU_levels[l] * mean_recall_at_IoU_levels[l]),
+                                                      (mean_precision_at_IoU_levels[l] + mean_recall_at_IoU_levels[l]))
+
     # FIXME da mettere i controlli per le divisioni per zero
-    return mean_IoU, mean_recall_50, mean_precision_50, mean_f1_score, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision, IoU_ditribution
+    return mean_IoU, mean_recall_50, mean_precision_50, mean_f1_score, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision, IoU_ditribution, mean_recall_at_IoU_levels, mean_precision_at_IoU_levels, mean_f1_score_at_IoU_levels
 
 def calculate_maximum_intersection_affinity(all_detected_obstacles_files, gt_mask):
     intersection_px_count = 0

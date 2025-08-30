@@ -2,6 +2,7 @@ import os
 
 import cv2
 import numpy as np
+import pandas as pd
 import torch
 from scipy.signal import savgol_filter
 from torchvision.ops import box_convert
@@ -1107,59 +1108,80 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway, mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, mean_f1_score_at_IoU_levels_railway = calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir)
     mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles, mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, mean_f1_score_at_IoU_levels_obstacles =calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
 
-    # Create IoU-precision curve plot railway
+    #Table with everithing
+
+    # Create a dictionary with 3 columns and 8 rows of random data
+    metrics = ["IoU", "Recall", "Precision", "F1-score"]
+    railway = [int(mean_IoU_rails*100)/100, int(mean_recall_rails_75*100)/100, int(mean_precision_rails_75*100)/100, int(mean_f1_score_rails*100)/100]
+    obstacles = [int(mean_IoU_obstacles*100)/100, int(mean_recall_obstacles_75*100)/100, int(mean_precision_obstacles_75*100)/100, int(mean_f1_score_obstacles*100)/100]
+    data = {
+        'Metrics': metrics,
+        'Railway': railway,
+        'Obstacles': obstacles
+    }
+
+    # Create the DataFrame
+    df = pd.DataFrame(data)
+
+    # Create a figure and axis
     fig, ax = plt.subplots()
-    plt.plot(range(0,20), mean_precision_at_IoU_levels_railway, 'b-',
-             label='IoU-Precision curve')
+
+    # Hide the axes
+    ax.xaxis.set_visible(False)
+    ax.yaxis.set_visible(False)
+    ax.set_frame_on(False)
+
+    # Create the table
+    table = ax.table(cellText=df.values,
+                     colLabels=df.columns,
+                     cellLoc='center',
+                     loc='center')
+
+    # Adjust font size and layout
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.2, 1.2)
+
+    # Add a title
+    ax.set_title('Result Metrics', fontsize=16, pad=20)
+
+    # Save the table to a file
+    fig.savefig(metric_result_dir + "/table.png", bbox_inches='tight', pad_inches=0.1, dpi=300)
+
+    # Display the table
+    plt.show()
+
+    # Create IoU-precision curve plot
+    fig, ax = plt.subplots()
+    plt.plot(range(0,20), mean_precision_at_IoU_levels_obstacles, color="orange", linestyle="-",
+             label='Obstacles')
+    plt.plot(range(0, 20), mean_precision_at_IoU_levels_railway, 'g-',
+             label='Railway')
     plt.xlabel('IoU')
     plt.ylabel('Precision')
-    plt.title('Precision-IoU Curve for Railway')
+    plt.title('Precision-IoU Curve')
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    fig.savefig(os.path.join(metric_result_dir + "precision_IoU_curve_railway.png"))
+    fig.savefig(os.path.join(metric_result_dir + "/precision_IoU_curve.png"))
 
     #Create IoU-recall curve plot railway
     fig, ax = plt.subplots()
-    plt.plot(range(0,20), mean_recall_at_IoU_levels_railway, 'b-',
-             label='IoU-Recall curve')
+    plt.plot(range(0,20), mean_recall_at_IoU_levels_obstacles, color="orange", linestyle="-",
+             label='Obstacles')
+    plt.plot(range(0, 20), mean_recall_at_IoU_levels_railway, 'g-',
+             label='Railway')
     plt.xlabel('IoU')
     plt.ylabel('Recall')
-    plt.title('Recall-IoU Curve for Railway')
+    plt.title('Recall-IoU Curve')
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    fig.savefig(os.path.join(metric_result_dir + "recall_IoU_curve_railway.png"))
-
-    # Create precision-recall curve plot railway
-    fig, ax = plt.subplots()
-    plt.plot(mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, 'b-', label='Precision-Recall curve')
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('Precision-Recall Curve at Different IoU Thresholds for Railway')
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    fig.savefig(os.path.join(metric_result_dir + "precision_recall_curve_railway.png"))
-
-    #Create precision-recall curve plot obstacles
-    fig, ax = plt.subplots()
-    plt.plot(mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, 'b-', label='Precision-Recall curve')
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('Precision-Recall Curve at Different IoU Thresholds for Obstacles')
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    fig.savefig(os.path.join(metric_result_dir + "precision_recall_curve_obstacles.png"))
+    fig.savefig(os.path.join(metric_result_dir + "/recall_IoU_curve.png"))
 
     # create plot comparison
     fig, ax = plt.subplots()
@@ -1198,7 +1220,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
         bar_width = 0.35
         opacity = 0.8
 
-        plt.bar(index, IoU_distribution_railway, bar_width, alpha=opacity, color='blue', label='Railway IoU')
+        plt.bar(index, IoU_distribution_railway, bar_width, alpha=opacity, color='green', label='Railway IoU')
 
         plt.xlabel('IoU value Railway')
         plt.ylabel('Number of occurrences')
@@ -1221,7 +1243,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
         bar_width = 0.35
         opacity = 0.8
 
-        plt.bar(index, IoU_distribution_obstacles, bar_width, alpha=opacity, color='yellow',label='Obstacles IoU')
+        plt.bar(index, IoU_distribution_obstacles, bar_width, alpha=opacity, color='orange',label='Obstacles IoU')
 
         plt.xlabel('IoU value Obstacles')
         plt.ylabel('Number of occurrences')

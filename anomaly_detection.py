@@ -533,7 +533,7 @@ def main():
                 key = cv2.waitKey(1)
                 if key == ord('q'):
                     raise KeyboardInterrupt
-            if True:  #to remove True in args.save_frames
+            if False:  #to remove True in args.save_frames
                 plt.savefig(os.path.join(args.output_path, f"frame_{frame_idx:06d}.jpg"))
 
             plt.close()

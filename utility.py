@@ -2,6 +2,7 @@ import os
 
 import cv2
 import numpy as np
+import pandas as pd
 import torch
 from scipy.signal import savgol_filter
 from torchvision.ops import box_convert
@@ -9,12 +10,14 @@ from torchvision.ops import box_convert
 from groundingdino.util.inference import load_image, predict, annotate
 from matplotlib import pyplot as plt
 
+
 def safe_div(numerator, denominator, default=0.0):
     """
     Safely divide two numbers. Returns `default` when denominator is zero.
     Use this for metrics like precision/recall that can be undefined when the denominator is 0.
     """
     return numerator / denominator if denominator != 0 else default
+
 
 ## PLOTTING & SAVING
 
@@ -55,9 +58,6 @@ def show_mask(mask, ax, random_color=False, borders=True):
         contours = [cv2.approxPolyDP(contour, epsilon=0.01, closed=True) for contour in contours]
         mask_image = cv2.drawContours(mask_image, contours, -1, (1, 1, 1, 0.5), thickness=2)
     ax.imshow(mask_image)
-
-
-
 
 
 def show_points(coords, labels, ax, marker_size=200):
@@ -722,6 +722,7 @@ def extract_ground_points_and_labels(image_source, ground_gd_box):
 
     return points, labels
 
+
 def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):
     # Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
 
@@ -838,10 +839,14 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
         for i in range(len(savol_array)):
             if i > 0 and i < len(savol_array_left) - 1 and (i % 6) == 0:
                 current_y_in_rail_box = int(savol_array[i][1] - y)
-                savol_array_expanded.append([int(savol_array[i][0] - int(current_y_in_rail_box * 0.12)), int(savol_array[i][1])])
-                savol_array_expanded.append([int(savol_array[i][0] + int(current_y_in_rail_box * 0.12)), int(savol_array[i][1])])
-                savol_array_expanded_negative.append([int(savol_array[i][0] - int(current_y_in_rail_box * 1.0)), int(savol_array[i][1])])
-                savol_array_expanded_negative.append([int(savol_array[i][0] + int(current_y_in_rail_box * 1.0)), int(savol_array[i][1])])
+                savol_array_expanded.append(
+                    [int(savol_array[i][0] - int(current_y_in_rail_box * 0.12)), int(savol_array[i][1])])
+                savol_array_expanded.append(
+                    [int(savol_array[i][0] + int(current_y_in_rail_box * 0.12)), int(savol_array[i][1])])
+                savol_array_expanded_negative.append(
+                    [int(savol_array[i][0] - int(current_y_in_rail_box * 1.0)), int(savol_array[i][1])])
+                savol_array_expanded_negative.append(
+                    [int(savol_array[i][0] + int(current_y_in_rail_box * 1.0)), int(savol_array[i][1])])
 
         # Removing positive points that are inside a detected object and adding negative points for the same objects
         for obj_id, mask in rails_masks.items():
@@ -852,7 +857,8 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
                 temp_mask_image = binary_mask[..., None] * color.reshape(1, 1, -1)
 
                 for p in savol_array_expanded[:]:
-                    px = int(p[0]); py = int(p[1])
+                    px = int(p[0]);
+                    py = int(p[1])
                     if 0 <= py < temp_mask_image.shape[0] and 0 <= px < temp_mask_image.shape[1]:
                         if temp_mask_image[py, px].sum() > 0:
                             savol_array_expanded.remove(p)
@@ -933,6 +939,7 @@ def refine_mask(mask, previous_mask=None):
     a = black_image.astype(bool)
     return a
 
+
 def show_mask_v(mask, ax, save_fig, frame_idx, obj_id=None, random_color=False):
     if random_color:
         color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
@@ -958,6 +965,7 @@ def show_mask_v(mask, ax, save_fig, frame_idx, obj_id=None, random_color=False):
     ax.imshow(mask_image_rgba)
     ax.axis('off')
     # plt.savefig(f"./seg_frames_2/{str(frame_name)}.jpg", bbox_inches='tight', pad_inches=0)
+
 
 def show_anomalies(mask, ax, rail_mask, save_fig, obj_id, frame_idx):
     # FIXME infatti se per esempio una persona è in piedi accanto ai binari ma è alta e il binario cirva in lontananza dietro la persona diventa arancione ma non è giusto
@@ -1104,62 +1112,87 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     metric_result_dir = os.path.join("metric_result")
     os.makedirs(metric_result_dir, exist_ok=True)
 
-    mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway, mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, mean_f1_score_at_IoU_levels_railway = calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir)
-    mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles, mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, mean_f1_score_at_IoU_levels_obstacles =calculate_accuracy_obstacles(number_of_frames,temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
+    mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway, mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, mean_f1_score_at_IoU_levels_railway = calculate_accuracy_main_railway(
+        number_of_frames, temp_main_railway_dir)
+    mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles, mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, mean_f1_score_at_IoU_levels_obstacles = calculate_accuracy_obstacles(
+        number_of_frames, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
 
-    # Create IoU-precision curve plot railway
+    # Table with everithing
+
+    # Create a dictionary with 3 columns and 8 rows of random data
+    metrics = ["IoU", "Recall", "Precision", "F1-score"]
+    railway = [int(mean_IoU_rails * 100) / 100, int(mean_recall_rails_75 * 100) / 100,
+               int(mean_precision_rails_75 * 100) / 100, int(mean_f1_score_rails * 100) / 100]
+    obstacles = [int(mean_IoU_obstacles * 100) / 100, int(mean_recall_obstacles_75 * 100) / 100,
+                 int(mean_precision_obstacles_75 * 100) / 100, int(mean_f1_score_obstacles * 100) / 100]
+    data = {
+        'Metrics': metrics,
+        'Railway': railway,
+        'Obstacles': obstacles
+    }
+
+    # Create the DataFrame
+    df = pd.DataFrame(data)
+
+    # Create a figure and axis
     fig, ax = plt.subplots()
-    plt.plot(range(0,20), mean_precision_at_IoU_levels_railway, 'b-',
-             label='IoU-Precision curve')
+
+    # Hide the axes
+    ax.xaxis.set_visible(False)
+    ax.yaxis.set_visible(False)
+    ax.set_frame_on(False)
+
+    # Create the table
+    table = ax.table(cellText=df.values,
+                     colLabels=df.columns,
+                     cellLoc='center',
+                     loc='center')
+
+    # Adjust font size and layout
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.2, 1.2)
+
+    # Add a title
+    ax.set_title('Result Metrics', fontsize=16, pad=20)
+
+    # Save the table to a file
+    fig.savefig(metric_result_dir + "/table.png", bbox_inches='tight', pad_inches=0.1, dpi=300)
+
+    # Display the table
+    plt.show()
+
+    # Create IoU-precision curve plot
+    fig, ax = plt.subplots()
+    plt.plot(range(0, 20), mean_precision_at_IoU_levels_obstacles, color="orange", linestyle="-",
+             label='Obstacles')
+    plt.plot(range(0, 20), mean_precision_at_IoU_levels_railway, 'g-',
+             label='Railway')
     plt.xlabel('IoU')
     plt.ylabel('Precision')
-    plt.title('Precision-IoU Curve for Railway')
+    plt.title('Precision-IoU Curve')
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    fig.savefig(os.path.join(metric_result_dir + "precision_IoU_curve_railway.png"))
+    fig.savefig(os.path.join(metric_result_dir + "/precision_IoU_curve.png"))
 
-    #Create IoU-recall curve plot railway
+    # Create IoU-recall curve plot railway
     fig, ax = plt.subplots()
-    plt.plot(range(0,20), mean_recall_at_IoU_levels_railway, 'b-',
-             label='IoU-Recall curve')
+    plt.plot(range(0, 20), mean_recall_at_IoU_levels_obstacles, color="orange", linestyle="-",
+             label='Obstacles')
+    plt.plot(range(0, 20), mean_recall_at_IoU_levels_railway, 'g-',
+             label='Railway')
     plt.xlabel('IoU')
     plt.ylabel('Recall')
-    plt.title('Recall-IoU Curve for Railway')
+    plt.title('Recall-IoU Curve')
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
     plt.show()
 
-    fig.savefig(os.path.join(metric_result_dir + "recall_IoU_curve_railway.png"))
-
-    # Create precision-recall curve plot railway
-    fig, ax = plt.subplots()
-    plt.plot(mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, 'b-', label='Precision-Recall curve')
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('Precision-Recall Curve at Different IoU Thresholds for Railway')
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    fig.savefig(os.path.join(metric_result_dir + "precision_recall_curve_railway.png"))
-
-    #Create precision-recall curve plot obstacles
-    fig, ax = plt.subplots()
-    plt.plot(mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, 'b-', label='Precision-Recall curve')
-    plt.xlabel('Recall')
-    plt.ylabel('Precision')
-    plt.title('Precision-Recall Curve at Different IoU Thresholds for Obstacles')
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    fig.savefig(os.path.join(metric_result_dir + "precision_recall_curve_obstacles.png"))
+    fig.savefig(os.path.join(metric_result_dir + "/recall_IoU_curve.png"))
 
     # create plot comparison
     fig, ax = plt.subplots()
@@ -1173,7 +1206,8 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
                      color='g',
                      label='Railway')
 
-    obstacles_means = [mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles]
+    obstacles_means = [mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75,
+                       mean_f1_score_obstacles]
     rects2 = plt.bar(index + bar_width, obstacles_means, bar_width,
                      alpha=opacity,
                      color='orange',
@@ -1182,7 +1216,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     plt.xlabel('Segmentation')
     plt.ylabel('Scores')
     plt.title('Scores by segmentation quality')
-    plt.xticks(index + bar_width/2, ('IoU', 'Recall', 'Precision', 'F1-score'))
+    plt.xticks(index + bar_width / 2, ('IoU', 'Recall', 'Precision', 'F1-score'))
     plt.legend()
 
     plt.tight_layout()
@@ -1198,7 +1232,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
         bar_width = 0.35
         opacity = 0.8
 
-        plt.bar(index, IoU_distribution_railway, bar_width, alpha=opacity, color='blue', label='Railway IoU')
+        plt.bar(index, IoU_distribution_railway, bar_width, alpha=opacity, color='green', label='Railway IoU')
 
         plt.xlabel('IoU value Railway')
         plt.ylabel('Number of occurrences')
@@ -1221,7 +1255,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
         bar_width = 0.35
         opacity = 0.8
 
-        plt.bar(index, IoU_distribution_obstacles, bar_width, alpha=opacity, color='yellow',label='Obstacles IoU')
+        plt.bar(index, IoU_distribution_obstacles, bar_width, alpha=opacity, color='orange', label='Obstacles IoU')
 
         plt.xlabel('IoU value Obstacles')
         plt.ylabel('Number of occurrences')
@@ -1267,7 +1301,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     fig.savefig(metric_result_dir + "/categorization_plot.png")
     plt.close()
 
-    #TODO faccio variare il livello di confidenza treshold e poi valuto per esempio i falsi negativi e i false positivi che in realtà sono stati scartati
+    # TODO faccio variare il livello di confidenza treshold e poi valuto per esempio i falsi negativi e i false positivi che in realtà sono stati scartati
 
 
 def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
@@ -1278,7 +1312,7 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
     false_negative = 0
 
     IoU_ditribution = [0] * 20
-    
+
     true_positive_at_IoU_levels = [0] * 20
     false_negative_at_IoU_levels = [0] * 20
 
@@ -1332,37 +1366,39 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
             union_px_count = cv2.countNonZero(union)
             IoU = intersection_px_count / union_px_count
             mean_IoU += IoU
-            IoU_ditribution[int(IoU * 10)*2] += 1
-            
-            IoU_level = int(IoU*100/5)
-            for l in range(0, IoU_level+1):
+            IoU_ditribution[int(IoU * 10) * 2] += 1
+
+            IoU_level = int(IoU * 100 / 5)
+            for l in range(0, IoU_level + 1):
                 true_positive_at_IoU_levels[l] += 1
-            for l in range(IoU_level+1, 20):
+            for l in range(IoU_level + 1, 20):
                 false_negative_at_IoU_levels[l] += 1
-            
+
             if IoU > 0.75:
                 true_positive += 1
             else:
                 false_negative += 1
 
-
-    mean_IoU = safe_div(mean_IoU , (true_positive + false_negative + false_positive))
+    mean_IoU = safe_div(mean_IoU, (true_positive + false_negative + false_positive))
     print("Mean mask accuracy:", mean_IoU)
-    mean_recall_75 = safe_div(true_positive , (true_positive + false_negative))
+    mean_recall_75 = safe_div(true_positive, (true_positive + false_negative))
     print("Mean mask recall:", mean_recall_75)
-    mean_precision_75 = safe_div(true_positive , (true_positive + false_positive))
+    mean_precision_75 = safe_div(true_positive, (true_positive + false_positive))
     print("Mean mask precision:", mean_precision_75)
-    mean_f1_score = 2 * safe_div((mean_precision_75 * mean_recall_75) , (mean_precision_75 + mean_recall_75))
+    mean_f1_score = 2 * safe_div((mean_precision_75 * mean_recall_75), (mean_precision_75 + mean_recall_75))
     print("Mean mask F1 score:", mean_f1_score)
-    
-    mean_recall_at_IoU_levels = [0]*20
-    mean_precision_at_IoU_levels = [0]*20
-    mean_f1_score_at_IoU_levels = [0]*20
-    
-    for l in range(0,20):
-        mean_recall_at_IoU_levels[l] = safe_div(true_positive_at_IoU_levels[l] , (true_positive_at_IoU_levels[l] + false_negative_at_IoU_levels[l]))
-        mean_precision_at_IoU_levels[l] = safe_div(true_positive_at_IoU_levels[l],(true_positive_at_IoU_levels[l]+false_positive))
-        mean_f1_score_at_IoU_levels[l] = 2*safe_div((mean_precision_at_IoU_levels[l]*mean_recall_at_IoU_levels[l]),(mean_precision_at_IoU_levels[l]+mean_recall_at_IoU_levels[l]))
+
+    mean_recall_at_IoU_levels = [0] * 20
+    mean_precision_at_IoU_levels = [0] * 20
+    mean_f1_score_at_IoU_levels = [0] * 20
+
+    for l in range(0, 20):
+        mean_recall_at_IoU_levels[l] = safe_div(true_positive_at_IoU_levels[l],
+                                                (true_positive_at_IoU_levels[l] + false_negative_at_IoU_levels[l]))
+        mean_precision_at_IoU_levels[l] = safe_div(true_positive_at_IoU_levels[l],
+                                                   (true_positive_at_IoU_levels[l] + false_positive))
+        mean_f1_score_at_IoU_levels[l] = 2 * safe_div((mean_precision_at_IoU_levels[l] * mean_recall_at_IoU_levels[l]),
+                                                      (mean_precision_at_IoU_levels[l] + mean_recall_at_IoU_levels[l]))
 
     # FIXME da mettere i controlli per le divisioni per zero
     return mean_IoU, mean_recall_75, mean_precision_75, mean_f1_score, IoU_ditribution, mean_recall_at_IoU_levels, mean_precision_at_IoU_levels, mean_f1_score_at_IoU_levels
@@ -1447,22 +1483,24 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
 
         test = 0
         for file in all_detected_safe_obstacles_files:
-            image = cv2.imread(os.path.join(temp_safe_obstacles_dir, file),cv2.IMREAD_GRAYSCALE)
+            image = cv2.imread(os.path.join(temp_safe_obstacles_dir, file), cv2.IMREAD_GRAYSCALE)
             image = image.astype(np.uint8)
-            all_detected_safe_obstacles_images.append([image,False])
-            test+=1
+            all_detected_safe_obstacles_images.append([image, False])
+            test += 1
         for file in all_detected_danger_obstacles_files:
-            image = cv2.imread(os.path.join(temp_dangerous_obstacles_dir, file),cv2.IMREAD_GRAYSCALE)
+            image = cv2.imread(os.path.join(temp_dangerous_obstacles_dir, file), cv2.IMREAD_GRAYSCALE)
             image = image.astype(np.uint8)
-            all_detected_danger_obstacles_images.append([image,False])
-            test+=1
+            all_detected_danger_obstacles_images.append([image, False])
+            test += 1
 
         gt_safe_image = cv2.imread(os.path.join(gt_safe_dir, f"frame_{frame_idx:06d}.png"))
         gt_danger_image = cv2.imread(os.path.join(gt_danger_dir, f"frame_{frame_idx:06d}.png"))
         gt_safe_image = gt_safe_image.astype(np.uint8)
         gt_danger_image = gt_danger_image.astype(np.uint8)
 
-        frame_IoU = calculate_frame_IoU(gt_safe_image, gt_danger_image, all_detected_safe_obstacles_files, temp_safe_obstacles_dir, all_detected_danger_obstacles_files, temp_dangerous_obstacles_dir)
+        frame_IoU = calculate_frame_IoU(gt_safe_image, gt_danger_image, all_detected_safe_obstacles_files,
+                                        temp_safe_obstacles_dir, all_detected_danger_obstacles_files,
+                                        temp_dangerous_obstacles_dir)
         if frame_IoU != None:
             mean_IoU += frame_IoU
             IoU_frames_count += 1
@@ -1487,9 +1525,9 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                 union_px_count = danger_union_px_count
                 if danger_index != None:
                     all_detected_danger_obstacles_images[danger_index][1] = True
-            #Se union px count è zero per forza sono vuoti gli array della detection
+            # Se union px count è zero per forza sono vuoti gli array della detection
             if union_px_count == 0:
-                false_negative+= 1
+                false_negative += 1
             else:
                 IoU = intersection_px_count / union_px_count
                 IoU_ditribution[int(IoU * 10) * 2] += 1
@@ -1553,23 +1591,23 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
             if element[1] == False:
                 false_positive += 1
 
-    #TODO da controllare che non ci siano divisioni per 0, perche se la treshold di IoU è troppo alta fa tutto zero
-    mean_IoU = safe_div(mean_IoU , IoU_frames_count)
+    # TODO da controllare che non ci siano divisioni per 0, perche se la treshold di IoU è troppo alta fa tutto zero
+    mean_IoU = safe_div(mean_IoU, IoU_frames_count)
     print("Mean obstacles mask accuracy:", mean_IoU)
-    mean_recall_50 = safe_div(true_positive , (true_positive + false_negative))
+    mean_recall_50 = safe_div(true_positive, (true_positive + false_negative))
     print("Mean obstacles mask recall:", mean_recall_50)
-    mean_precision_50 = safe_div(true_positive , (true_positive + false_positive))
+    mean_precision_50 = safe_div(true_positive, (true_positive + false_positive))
     print("Mean obstacles mask precision:", mean_precision_50)
-    mean_f1_score = 2 * safe_div((mean_precision_50 * mean_recall_50) , (mean_precision_50 + mean_recall_50))
+    mean_f1_score = 2 * safe_div((mean_precision_50 * mean_recall_50), (mean_precision_50 + mean_recall_50))
     print("Mean obstacles mask F1 score:", mean_f1_score)
 
-    mean_true_safe_recall = safe_div(true_safe , (true_safe + false_dangerous))
+    mean_true_safe_recall = safe_div(true_safe, (true_safe + false_dangerous))
     print("Mean obstacles true safe recall:", mean_true_safe_recall)
-    mean_true_dangerous_recall = safe_div(true_dangerous , (true_dangerous + false_safe))
+    mean_true_dangerous_recall = safe_div(true_dangerous, (true_dangerous + false_safe))
     print("Mean obstacles true dangerous recall:", mean_true_dangerous_recall)
-    mean_true_safe_precision = safe_div(true_safe , (true_safe + false_safe))
+    mean_true_safe_precision = safe_div(true_safe, (true_safe + false_safe))
     print("Mean obstacles true safe precision:", mean_true_safe_precision)
-    mean_true_dangerous_precision = safe_div(true_dangerous , (true_dangerous + false_dangerous))
+    mean_true_dangerous_precision = safe_div(true_dangerous, (true_dangerous + false_dangerous))
     print("Mean obstacles true dangerous precision:", mean_true_dangerous_precision)
 
     mean_recall_at_IoU_levels = [0] * 20
@@ -1586,6 +1624,7 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
 
     # FIXME da mettere i controlli per le divisioni per zero
     return mean_IoU, mean_recall_50, mean_precision_50, mean_f1_score, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision, IoU_ditribution, mean_recall_at_IoU_levels, mean_precision_at_IoU_levels, mean_f1_score_at_IoU_levels
+
 
 def calculate_maximum_intersection_affinity(all_detected_obstacles_files, gt_mask):
     intersection_px_count = 0
@@ -1605,6 +1644,7 @@ def calculate_maximum_intersection_affinity(all_detected_obstacles_files, gt_mas
         i += 1
     return intersection_px_count, union_px_count, index
 
+
 def extract_masks_from_image(gt_safe_image):
     all_gt_safe_images = []
     flat_gt_safe_image = gt_safe_image.reshape(-1, 3)
@@ -1619,7 +1659,9 @@ def extract_masks_from_image(gt_safe_image):
         all_gt_safe_images.append(mask)
     return all_gt_safe_images
 
-def calculate_frame_IoU(gt_safe_image, gt_danger_image, all_detected_safe_obstacles_files,temp_safe_obstacles_dir, all_detected_danger_obstacles_files,temp_dangerous_obstacles_dir):
+
+def calculate_frame_IoU(gt_safe_image, gt_danger_image, all_detected_safe_obstacles_files, temp_safe_obstacles_dir,
+                        all_detected_danger_obstacles_files, temp_dangerous_obstacles_dir):
     result_IoU = None
     is_gt_empty = False
     if gt_safe_image is not None and gt_danger_image is not None:
@@ -1638,21 +1680,26 @@ def calculate_frame_IoU(gt_safe_image, gt_danger_image, all_detected_safe_obstac
         return result_IoU
     else:
         if len(all_detected_safe_obstacles_files) != 0:
-            detected_obstacle_image = cv2.imread(os.path.join(temp_safe_obstacles_dir, all_detected_safe_obstacles_files[0]),cv2.IMREAD_GRAYSCALE)
+            detected_obstacle_image = cv2.imread(
+                os.path.join(temp_safe_obstacles_dir, all_detected_safe_obstacles_files[0]), cv2.IMREAD_GRAYSCALE)
             detected_obstacle_image = detected_obstacle_image.astype(np.uint8)
             detected_image = detected_obstacle_image
         elif len(all_detected_danger_obstacles_files) != 0:
-            detected_obstacle_image = cv2.imread(os.path.join(temp_dangerous_obstacles_dir, all_detected_danger_obstacles_files[0]),cv2.IMREAD_GRAYSCALE)
+            detected_obstacle_image = cv2.imread(
+                os.path.join(temp_dangerous_obstacles_dir, all_detected_danger_obstacles_files[0]),
+                cv2.IMREAD_GRAYSCALE)
             detected_obstacle_image = detected_obstacle_image.astype(np.uint8)
             detected_image = detected_obstacle_image
         elif is_gt_empty == False:
             return 0
         for detected_obstacle_file in all_detected_safe_obstacles_files:
-            detected_obstacle_image = cv2.imread(os.path.join(temp_safe_obstacles_dir, detected_obstacle_file),cv2.IMREAD_GRAYSCALE)
+            detected_obstacle_image = cv2.imread(os.path.join(temp_safe_obstacles_dir, detected_obstacle_file),
+                                                 cv2.IMREAD_GRAYSCALE)
             detected_obstacle_image = detected_obstacle_image.astype(np.uint8)
             detected_image = cv2.bitwise_or(detected_image, detected_obstacle_image)
         for detected_obstacle_file in all_detected_danger_obstacles_files:
-            detected_obstacle_image = cv2.imread(os.path.join(temp_dangerous_obstacles_dir, detected_obstacle_file),cv2.IMREAD_GRAYSCALE)
+            detected_obstacle_image = cv2.imread(os.path.join(temp_dangerous_obstacles_dir, detected_obstacle_file),
+                                                 cv2.IMREAD_GRAYSCALE)
             detected_obstacle_image = detected_obstacle_image.astype(np.uint8)
             detected_image = cv2.bitwise_or(detected_image, detected_obstacle_image)
         intersection = cv2.bitwise_and(detected_image, gt_image)

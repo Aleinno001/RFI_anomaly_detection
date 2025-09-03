@@ -528,7 +528,7 @@ def main():
                 else:
                     utility.show_mask_v(mask, plt.gca(), True, frame_idx, obj_id=obj_id)#FIXME al posto di True ci devo mettere args.accuracy_test
                     rail_mask = mask
-            if True:  # show the plt image using OpenCV     args.show_frames
+            if False:  # show the plt image using OpenCV     args.show_frames
                 cv2.imshow("Processed video frame", utility.plt_figure_to_cv2( plt.gcf()))
                 key = cv2.waitKey(1)
                 if key == ord('q'):

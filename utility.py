@@ -1459,19 +1459,11 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
         if os.path.isfile(os.path.join(temp_safe_obstacles_dir, f)) and os.path.splitext(f.lower())[-1] in valid_exts
     )
 
-    if not safe_files:
-        print(f"[calculate_accuracy] No detected mask files found in: {safe_files}")
-        return
-
     danger_files = sorted(
         f for f in os.listdir(temp_dangerous_obstacles_dir)
         if
         os.path.isfile(os.path.join(temp_dangerous_obstacles_dir, f)) and os.path.splitext(f.lower())[-1] in valid_exts
     )
-
-    if not danger_files:
-        print(f"[calculate_accuracy] No detected mask files found in: {danger_files}")
-        return
 
     for frame_idx in range(number_of_frames):
         all_detected_safe_obstacles_files = [e for e in safe_files if int(e.split("_")[1].split(".")[0]) == frame_idx]
@@ -1495,8 +1487,12 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
 
         gt_safe_image = cv2.imread(os.path.join(gt_safe_dir, f"frame_{frame_idx:06d}.png"))
         gt_danger_image = cv2.imread(os.path.join(gt_danger_dir, f"frame_{frame_idx:06d}.png"))
-        gt_safe_image = gt_safe_image.astype(np.uint8)
-        gt_danger_image = gt_danger_image.astype(np.uint8)
+        if gt_safe_image is not None:
+            gt_safe_image = gt_safe_image.astype(np.uint8)
+            all_gt_safe_masks = extract_masks_from_image(gt_safe_image)
+        if gt_danger_image is not None:
+            gt_danger_image = gt_danger_image.astype(np.uint8)
+            all_gt_danger_masks = extract_masks_from_image(gt_danger_image)
 
         frame_IoU = calculate_frame_IoU(gt_safe_image, gt_danger_image, all_detected_safe_obstacles_files,
                                         temp_safe_obstacles_dir, all_detected_danger_obstacles_files,
@@ -1504,86 +1500,88 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
         if frame_IoU != None:
             mean_IoU += frame_IoU
             IoU_frames_count += 1
-
-        all_gt_safe_masks = extract_masks_from_image(gt_safe_image)
-        all_gt_danger_masks = extract_masks_from_image(gt_danger_image)
-
-        for gt_safe_mask in all_gt_safe_masks:
-            safe_intersection_px_count, safe_union_px_count, safe_index = calculate_maximum_intersection_affinity(
-                all_detected_safe_obstacles_images, gt_safe_mask)
-            danger_intersection_px_count, danger_union_px_count, danger_index = calculate_maximum_intersection_affinity(
-                all_detected_danger_obstacles_images, gt_safe_mask)
-            is_safe = True
-            if safe_intersection_px_count > danger_intersection_px_count:
-                intersection_px_count = safe_intersection_px_count
-                union_px_count = safe_union_px_count
-                if safe_index != None:
-                    all_detected_safe_obstacles_images[safe_index][1] = True
-            else:
-                is_safe = False
-                intersection_px_count = danger_intersection_px_count
-                union_px_count = danger_union_px_count
-                if danger_index != None:
-                    all_detected_danger_obstacles_images[danger_index][1] = True
-            # Se union px count è zero per forza sono vuoti gli array della detection
-            if union_px_count == 0:
-                false_negative += 1
-            else:
-                IoU = intersection_px_count / union_px_count
-                IoU_ditribution[int(IoU * 10) * 2] += 1
-
-                IoU_level = int(IoU * 100 / 5)
-                for l in range(0, IoU_level + 1):
-                    true_positive_at_IoU_levels[l] += 1
-                for l in range(IoU_level + 1, 20):
-                    false_negative_at_IoU_levels[l] += 1
-
-                if IoU > 0.5:
-                    true_positive += 1
-                    if is_safe:
-                        true_safe += 1
-                    else:
-                        false_dangerous += 1
+        if gt_safe_image is not None:
+            for gt_safe_mask in all_gt_safe_masks:
+                safe_intersection_px_count, safe_union_px_count, safe_index = calculate_maximum_intersection_affinity(
+                    all_detected_safe_obstacles_images, gt_safe_mask)
+                danger_intersection_px_count, danger_union_px_count, danger_index = calculate_maximum_intersection_affinity(
+                    all_detected_danger_obstacles_images, gt_safe_mask)
+                is_safe = True
+                if safe_intersection_px_count > danger_intersection_px_count:
+                    intersection_px_count = safe_intersection_px_count
+                    union_px_count = safe_union_px_count
+                    if safe_index != None:
+                        all_detected_safe_obstacles_images[safe_index][1] = True
+                        all_detected_safe_obstacles_images[safe_index][0] = cv2.subtract(all_detected_safe_obstacles_images[safe_index][0], gt_safe_mask)
                 else:
+                    is_safe = False
+                    intersection_px_count = danger_intersection_px_count
+                    union_px_count = danger_union_px_count
+                    if danger_index != None:
+                        all_detected_danger_obstacles_images[danger_index][1] = True
+                        all_detected_danger_obstacles_images[danger_index][0] = cv2.subtract(all_detected_danger_obstacles_images[danger_index][0],gt_safe_mask)
+                # Se union px count è zero per forza sono vuoti gli array della detection
+                if union_px_count == 0:
                     false_negative += 1
-
-        for gt_danger_mask in all_gt_danger_masks:
-            safe_intersection_px_count, safe_union_px_count, safe_index = calculate_maximum_intersection_affinity(
-                all_detected_safe_obstacles_images, gt_danger_mask)
-            danger_intersection_px_count, danger_union_px_count, danger_index = calculate_maximum_intersection_affinity(
-                all_detected_danger_obstacles_images, gt_danger_mask)
-            is_dangerous = True
-            if safe_intersection_px_count > danger_intersection_px_count:
-                is_dangerous = False
-                intersection_px_count = safe_intersection_px_count
-                union_px_count = safe_union_px_count
-                if danger_index != None:
-                    all_detected_safe_obstacles_images[safe_index][1] = True
-            else:
-                intersection_px_count = danger_intersection_px_count
-                union_px_count = danger_union_px_count
-                if danger_index != None:
-                    all_detected_danger_obstacles_images[danger_index][1] = True
-            if union_px_count == 0:
-                false_negative += 1
-            else:
-                IoU = intersection_px_count / union_px_count
-                IoU_ditribution[int(IoU * 10) * 2] += 1
-
-                IoU_level = int(IoU * 100 / 5)
-                for l in range(0, IoU_level + 1):
-                    true_positive_at_IoU_levels[l] += 1
-                for l in range(IoU_level + 1, 20):
-                    false_negative_at_IoU_levels[l] += 1
-
-                if IoU > 0.5:
-                    true_positive += 1
-                    if is_dangerous:
-                        true_dangerous += 1
-                    else:
-                        false_safe += 1
                 else:
+                    IoU = intersection_px_count / union_px_count
+                    IoU_ditribution[int(IoU * 10) * 2] += 1
+
+                    IoU_level = int(IoU * 100 / 5)
+                    for l in range(0, IoU_level + 1):
+                        true_positive_at_IoU_levels[l] += 1
+                    for l in range(IoU_level + 1, 20):
+                        false_negative_at_IoU_levels[l] += 1
+
+                    if IoU > 0.5:
+                        true_positive += 1
+                        if is_safe:
+                            true_safe += 1
+                        else:
+                            false_dangerous += 1
+                    else:
+                        false_negative += 1
+
+        if gt_danger_image is not None:
+            for gt_danger_mask in all_gt_danger_masks:
+                safe_intersection_px_count, safe_union_px_count, safe_index = calculate_maximum_intersection_affinity(
+                    all_detected_safe_obstacles_images, gt_danger_mask)
+                danger_intersection_px_count, danger_union_px_count, danger_index = calculate_maximum_intersection_affinity(
+                    all_detected_danger_obstacles_images, gt_danger_mask)
+                is_dangerous = True
+                if safe_intersection_px_count > danger_intersection_px_count:
+                    is_dangerous = False
+                    intersection_px_count = safe_intersection_px_count
+                    union_px_count = safe_union_px_count
+                    if danger_index != None:
+                        all_detected_safe_obstacles_images[safe_index][1] = True
+                        all_detected_safe_obstacles_images[safe_index][0] = cv2.subtract(all_detected_safe_obstacles_images[safe_index][0], gt_danger_mask)
+                else:
+                    intersection_px_count = danger_intersection_px_count
+                    union_px_count = danger_union_px_count
+                    if danger_index != None:
+                        all_detected_danger_obstacles_images[danger_index][1] = True
+                        all_detected_danger_obstacles_images[danger_index][0] = cv2.subtract(all_detected_danger_obstacles_images[danger_index][0],gt_danger_mask)
+                if union_px_count == 0:
                     false_negative += 1
+                else:
+                    IoU = intersection_px_count / union_px_count
+                    IoU_ditribution[int(IoU * 10) * 2] += 1
+
+                    IoU_level = int(IoU * 100 / 5)
+                    for l in range(0, IoU_level + 1):
+                        true_positive_at_IoU_levels[l] += 1
+                    for l in range(IoU_level + 1, 20):
+                        false_negative_at_IoU_levels[l] += 1
+
+                    if IoU > 0.5:
+                        true_positive += 1
+                        if is_dangerous:
+                            true_dangerous += 1
+                        else:
+                            false_safe += 1
+                    else:
+                        false_negative += 1
         for element in all_detected_safe_obstacles_images:
             if element[1] == False:
                 false_positive += 1
@@ -1702,9 +1700,14 @@ def calculate_frame_IoU(gt_safe_image, gt_danger_image, all_detected_safe_obstac
                                                  cv2.IMREAD_GRAYSCALE)
             detected_obstacle_image = detected_obstacle_image.astype(np.uint8)
             detected_image = cv2.bitwise_or(detected_image, detected_obstacle_image)
+
         intersection = cv2.bitwise_and(detected_image, gt_image)
         intersection_px_count = cv2.countNonZero(intersection)
         union = cv2.bitwise_or(detected_image, gt_image)
         union_px_count = cv2.countNonZero(union)
         result_IoU = intersection_px_count / union_px_count
+
         return result_IoU
+
+
+#FIXME per sistemare l'errore nel calcolo dello IoU dovuto ad una detection che fonde due ostacoli, poi la confronto con GT e viene un numero basso due volte anche se non è vero: per ogni maschera detection controllo se collidono più maschere GT

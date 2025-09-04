@@ -1114,7 +1114,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
 
     mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway, mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, mean_f1_score_at_IoU_levels_railway = calculate_accuracy_main_railway(
         number_of_frames, temp_main_railway_dir)
-    mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles, mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, mean_f1_score_at_IoU_levels_obstacles = calculate_accuracy_obstacles(
+    mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles, mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, mean_f1_score_at_IoU_levels_obstacles, panoptic_quality = calculate_accuracy_obstacles(
         number_of_frames, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
 
     # Table with everithing
@@ -1196,18 +1196,18 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
 
     # create plot comparison
     fig, ax = plt.subplots()
-    index = np.arange(4)
+    index = np.arange(5)
     bar_width = 0.35
     opacity = 0.8
 
-    railway_means = [mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails]
+    railway_means = [mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails,0]
     rects1 = plt.bar(index, railway_means, bar_width,
                      alpha=opacity,
                      color='g',
                      label='Railway')
 
     obstacles_means = [mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75,
-                       mean_f1_score_obstacles]
+                       mean_f1_score_obstacles, panoptic_quality]
     rects2 = plt.bar(index + bar_width, obstacles_means, bar_width,
                      alpha=opacity,
                      color='orange',
@@ -1216,7 +1216,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     plt.xlabel('Segmentation')
     plt.ylabel('Scores')
     plt.title('Scores by segmentation quality')
-    plt.xticks(index + bar_width / 2, ('IoU', 'Recall', 'Precision', 'F1-score'))
+    plt.xticks(index + bar_width / 2, ('IoU', 'Recall', 'Precision', 'F1-score','Panoptic Quality'))
     plt.legend()
 
     plt.tight_layout()
@@ -1413,6 +1413,8 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
 
     IoU_ditribution = [0] * 20
 
+    IoU_panoptic = 0
+
     true_positive_at_IoU_levels = [0] * 20
     false_negative_at_IoU_levels = [0] * 20
 
@@ -1535,6 +1537,7 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
 
                     if IoU > 0.5:
                         true_positive += 1
+                        IoU_panoptic += IoU
                         if is_safe:
                             true_safe += 1
                         else:
@@ -1576,6 +1579,7 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
 
                     if IoU > 0.5:
                         true_positive += 1
+                        IoU_panoptic += IoU
                         if is_dangerous:
                             true_dangerous += 1
                         else:
@@ -1599,6 +1603,9 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
     mean_f1_score = 2 * safe_div((mean_precision_50 * mean_recall_50), (mean_precision_50 + mean_recall_50))
     print("Mean obstacles mask F1 score:", mean_f1_score)
 
+    panoptic_quality = safe_div(IoU_panoptic, (true_positive + 0.5*false_positive+0.5*false_negative))
+    print("Panoptic quality:", panoptic_quality)
+
     mean_true_safe_recall = safe_div(true_safe, (true_safe + false_dangerous))
     print("Mean obstacles true safe recall:", mean_true_safe_recall)
     mean_true_dangerous_recall = safe_div(true_dangerous, (true_dangerous + false_safe))
@@ -1621,7 +1628,7 @@ def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp
                                                       (mean_precision_at_IoU_levels[l] + mean_recall_at_IoU_levels[l]))
 
     # FIXME da mettere i controlli per le divisioni per zero
-    return mean_IoU, mean_recall_50, mean_precision_50, mean_f1_score, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision, IoU_ditribution, mean_recall_at_IoU_levels, mean_precision_at_IoU_levels, mean_f1_score_at_IoU_levels
+    return mean_IoU, mean_recall_50, mean_precision_50, mean_f1_score, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision, IoU_ditribution, mean_recall_at_IoU_levels, mean_precision_at_IoU_levels, mean_f1_score_at_IoU_levels, panoptic_quality
 
 
 def calculate_maximum_intersection_affinity(all_detected_obstacles_files, gt_mask):

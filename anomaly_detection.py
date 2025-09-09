@@ -10,6 +10,7 @@ from sam2.build_sam import build_sam2_video_predictor
 
 import utility
 from gpu_utility import set_device
+from utility import is_mask_duplicate
 
 
 def read_config(config_path):
@@ -152,7 +153,7 @@ def main():
     sam2_checkpoint = config['sam2_checkpoint']
     sam2_cfg_path = config['sam2_cfg_path']
 
-    video_predictor_rails = build_sam2_video_predictor(sam2_cfg_path, sam2_checkpoint, device=device)
+    video_predictor = build_sam2_video_predictor(sam2_cfg_path, sam2_checkpoint, device=device)
 
     # Load the GroundingDINO model
     groundingdino_checkpoint = config['groundingdino_checkpoint']
@@ -197,7 +198,7 @@ def main():
     print(f"Video stream at {fps} FPS, resolution: {width}x{height}")
 
     # Object tracking variables
-    ann_rail_id = 0
+    ann_id = 0
     last_masks_rails = {}  # Store the last known mask for each object
     frame_idx = 0
     main_railway_box = None
@@ -228,7 +229,7 @@ def main():
             # Initialize new state for this frame
             torch.cuda.empty_cache()
             gc.collect()
-            inference_state_rails = video_predictor_rails.init_state(video_path=temp_dir)
+            inference_state_rails = video_predictor.init_state(video_path=temp_dir)
 
             # Process based on frame index
             if frame_idx == 0:
@@ -237,7 +238,7 @@ def main():
                     frame_path, groundingdino, GROUND_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_GROUND,
                     TEXT_TRESHOLD=TEXT_TRESHOLD_GROUND, show=False,
                 )
-
+                #Selection of the box of the ground with maximum confidence
                 max_score_railway = 0
                 for i, box in enumerate(dino_boxes):
                  if dino_scores[i] > max_score_railway:
@@ -249,7 +250,7 @@ def main():
                     frame_path, groundingdino, RAILWAY_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
                     TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
                 )
-
+                #Selection of the bounding box of the rails that better fits the expeted location and size
                 max_score_railway = 0
                 for i,box in enumerate(dino_boxes):
                     if main_railway_box is None:
@@ -260,13 +261,13 @@ def main():
                         dino_box_center = (box[0] + box[2]) // 2
                         image_center = width // 2
                         dino_abs_distance_from_center = abs(dino_box_center - image_center)
-                        if dino_box_width >= int(0.75*width):
+                        if dino_box_width >= int(0.5*width):
                             if dino_abs_distance_from_center < int(0.25*width):
                                 if dino_scores[i] > max_score_railway:
                                     main_railway_box = box
                                     max_score_railway = dino_scores[i]
                 all_obstacles_points = []
-                #---------prova di fare più detection singole per ogni parola--
+                #MULTIPLE OBSTACLES DETECTION
                 for class_name in OBSTACLE_PROMPT:
                     dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
                         frame_path, groundingdino, class_name, device, BOX_TRESHOLD=BOX_TRESHOLD_OBSTACLES,
@@ -282,45 +283,45 @@ def main():
 
                 print(f"Found ground: {ground_box is not None}, Found main railway: {main_railway_box is not None}, all obstacles: {len(all_obstacles_points)}")
 
-                ann_rail_id += 1
+                ann_id += 1
                 # Add railway to tracking
                 if main_railway_box is not None:
                     points, labels = utility.extract_main_internal_railway_points_and_labels(frame_rgb, main_railway_box,last_masks_rails)
 
-                    _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
+                    _, out_obj_ids, out_mask_logits = video_predictor.add_new_points_or_box(
                         inference_state=inference_state_rails,
                         frame_idx=0,
-                        obj_id=ann_rail_id,
+                        obj_id=ann_id,
                         points=points,
                         labels=labels,
                         box=main_railway_box,
                     )
 
                     # Store railway mask
-                    last_masks_rails[ann_rail_id] = utility.refine_mask((out_mask_logits[0] > 0).cpu().numpy())
-                    #last_masks_rails[ann_rail_id] = (out_mask_logits[0] > 0).cpu().numpy()
+                    last_masks_rails[ann_id] = utility.refine_mask((out_mask_logits[0] > 0).cpu().numpy())
 
                 # Add detected objects to tracking
                 for obj_point in all_obstacles_points:
                     if utility.is_point_inside_box(obj_point, ground_box):
-                        ann_rail_id += 1
-                        _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
+                        ann_id += 1
+                        _, out_obj_ids, out_mask_logits = video_predictor.add_new_points_or_box(
                             inference_state=inference_state_rails,
                             frame_idx=0,
-                            obj_id=ann_rail_id,
+                            obj_id=ann_id,
                             points=[obj_point],
                             labels=np.array([1], np.int32),
                         )
 
                         # Store object mask
-                        idx = list(out_obj_ids).index(ann_rail_id) if ann_rail_id in out_obj_ids else 0
+                        idx = list(out_obj_ids).index(ann_id) if ann_id in out_obj_ids else 0
                         temp_mask = (out_mask_logits[idx] > 0).cpu().numpy()
-                        if utility.is_mask_an_obstacle(temp_mask, last_masks_rails[1],ground_box):
-                            last_masks_rails[ann_rail_id] = temp_mask
+                        if utility.is_mask_an_obstacle(temp_mask, last_masks_rails[1],ground_box) and (not is_mask_duplicate(temp_mask, idx, last_masks_rails)):
+                            last_masks_rails[ann_id] = temp_mask
                         else:
-                            video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)
+                            video_predictor.remove_object(inference_state_rails, ann_id)
 
             else:
+                
                 #For non-first frames, transfer objects from previous frame
                 for obj_id, mask in last_masks_rails.items():
                     # Convert mask to proper format and find center point
@@ -341,7 +342,7 @@ def main():
                         # Special handling for railway (can use box instead of point)
                         if obj_id == 1 and main_railway_box is not None:
                             points, labels = utility.extract_main_internal_railway_points_and_labels(frame_rgb,main_railway_box,last_masks_rails)
-                            _, _, _ = video_predictor_rails.add_new_points_or_box(
+                            _, _, _ = video_predictor.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
                                 obj_id=obj_id,
@@ -350,7 +351,7 @@ def main():
                                 box=main_railway_box,
                             )
                         else:
-                            _, _, _ = video_predictor_rails.add_new_points_or_box(
+                            _, _, _ = video_predictor.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
                                 obj_id=obj_id,
@@ -359,7 +360,7 @@ def main():
                             )
 
             # Propagate all objects in current frame
-            result_rails = next(video_predictor_rails.propagate_in_video(
+            result_rails = next(video_predictor.propagate_in_video(
                 inference_state_rails,
                 start_frame_idx=0
             ))
@@ -388,25 +389,7 @@ def main():
                         ground_box = box
                         max_score_railway = dino_scores[i]
 
-                # DETECTION OF THE MAIN RAILWAY AND THE OBSTACLES   #TODO da mettere in un metodo perchè viene fatto lo stesso codice più in alto
-                dino_boxes, phrases, dino_scores = utility.grounding_Dino_analyzer(
-                    frame_path, groundingdino, RAILWAY_PROMPT, device, BOX_TRESHOLD=BOX_TRESHOLD_RAILS,
-                    TEXT_TRESHOLD=TEXT_TRESHOLD_RAILS, show=False,
-                )
 
-                # Find main railway box and object points
-                for i, box in enumerate(dino_boxes):
-                    if main_railway_box is None:
-                        main_railway_box = box
-                    else:
-                        gd_width = box[2] - box[0]
-                        gd_height = box[3] - box[1]
-                        actual_box_area = gd_width * gd_height
-                        main_width = main_railway_box[2] - main_railway_box[0]
-                        main_height = main_railway_box[3] - main_railway_box[1]
-                        main_box_area = main_width * main_height
-                        if actual_box_area < main_box_area:
-                            main_railway_box = box
 
                 dino_boxes = []
                 phrases = []
@@ -440,13 +423,13 @@ def main():
 
                         # Add new object if not already tracked and is inside the railway area
                         if (not already_tracked) and utility.is_point_inside_box([center_x, center_y], ground_box):
-                            ann_rail_id += 1
-                            print(f"New object {ann_rail_id} detected at frame {frame_idx}")
+                            ann_id += 1
+                            print(f"New object {ann_id} detected at frame {frame_idx}")
 
-                            _, out_obj_ids, out_mask_logits = video_predictor_rails.add_new_points_or_box(
+                            _, out_obj_ids, out_mask_logits = video_predictor.add_new_points_or_box(
                                 inference_state=inference_state_rails,
                                 frame_idx=0,
-                                obj_id=ann_rail_id,
+                                obj_id=ann_id,
                                 points=[[center_x, center_y]],
                                 labels=np.array([1], np.int32),
                             )
@@ -458,10 +441,10 @@ def main():
                                 out_obj_ids_np = np.array(out_obj_ids)
 
                             # Find index of the newly added object within out_obj_ids
-                            matches = np.where(out_obj_ids_np == ann_rail_id)[0]
+                            matches = np.where(out_obj_ids_np == ann_id)[0]
                             if len(matches) == 0:
                                 # Newly added object not present in outputs; clean up and skip
-                                video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)
+                                video_predictor.remove_object(inference_state_rails, ann_id)
                                 continue
 
                             new_idx = int(matches[0])
@@ -475,11 +458,11 @@ def main():
 
                             # If not considered an obstacle, remove and skip
                             if not utility.is_mask_an_obstacle(new_mask_np, last_masks_rails[1], ground_box):
-                                video_predictor_rails.remove_object(inference_state_rails, ann_rail_id)
+                                video_predictor.remove_object(inference_state_rails, ann_id)
                                 continue
 
                             # Re-propagate with the new object
-                            result_rails = next(video_predictor_rails.propagate_in_video(
+                            result_rails = next(video_predictor.propagate_in_video(
                                 inference_state_rails,
                                 start_frame_idx=0
                             ))
@@ -500,7 +483,7 @@ def main():
             for obj_id,mask in last_masks_rails.items():
                 if mask is not None:
                     if  obj_id!=1 and ((not utility.is_mask_an_obstacle(mask, last_masks_rails[1], ground_box)) or utility.is_mask_duplicate(mask, obj_id, last_masks_rails)):
-                        video_predictor_rails.remove_object(inference_state_rails, obj_id)
+                        video_predictor.remove_object(inference_state_rails, obj_id)
                         last_masks_rails[obj_id] = np.zeros((height, width), dtype=np.uint8)
 
             obj_id = 0

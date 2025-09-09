@@ -700,8 +700,6 @@ def is_mask_in_box(mask, box, margin=10):
 
 def extract_ground_points_and_labels(image_source, ground_gd_box):
     points = []
-    width = image_source.shape[1]
-    height = image_source.shape[0]
     gd_width = int(ground_gd_box[2] - ground_gd_box[0])
     gd_height = int(ground_gd_box[3] - ground_gd_box[1])
     x = int(ground_gd_box[0])
@@ -724,13 +722,19 @@ def extract_ground_points_and_labels(image_source, ground_gd_box):
 
 
 def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):
-    # Provo a fare la media tra: metà dell'iimagine, metà della gd box, metà tra i binari di canny
 
     width = image_source.shape[1]
     height = image_source.shape[0]
     gd_width = gd_box[2] - gd_box[0]
 
-    # -----------------CANNY EDGES--------------------
+    '''
+
+    
+
+    '''
+
+    mask_image = None
+    # CANNY EDGES
     image_cropped = image_source[int(gd_box[1]):int(gd_box[3]), int(gd_box[0]):int(gd_box[2])]
     img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
     img_blur = cv2.GaussianBlur(img_gray, (7, 7), 0)
@@ -758,7 +762,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     black_and_mask = np.zeros_like(image_source)
     cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
 
-    mask_image = None
+
     for obj_id, mask in rails_masks.items():
         if obj_id == 1:
             h, w = mask.shape[-2:]
@@ -915,8 +919,7 @@ def refine_mask(mask, previous_mask=None):
     # Convert your mask to uint8 and pad it properly
     mask = mask.astype('uint8')
 
-    # Simplifying image with blur and morphology, removing noise
-    # FloodFill requires the mask to be (H+2, W+2)
+    # flood
     padded_mask = np.zeros((h + 2, w + 2), dtype='uint8')
     padded_mask[1:h + 1,
     1:w + 1] = mask
@@ -936,8 +939,8 @@ def refine_mask(mask, previous_mask=None):
     black_image = np.zeros_like(black_and_white_mask_image)
     cv2.drawContours(black_image, [main_contour], -1, (255, 255, 255), 3)
     cv2.fillPoly(black_image, pts=[main_contour], color=(255, 255, 255))
-    a = black_image.astype(bool)
-    return a
+    result = black_image.astype(bool)
+    return result
 
 
 def show_mask_v(mask, ax, save_fig, frame_idx, obj_id=None, random_color=False):
@@ -1008,8 +1011,7 @@ def is_point_inside_box(point, box):
     return result
 
 
-def is_mask_an_obstacle(mask, rail_mask,
-                        railway_box):
+def is_mask_an_obstacle(mask, rail_mask,ground_box):
     result = True
     mask = np.array(mask, dtype=np.uint8)
     mask = mask.squeeze()
@@ -1023,24 +1025,23 @@ def is_mask_an_obstacle(mask, rail_mask,
     substraction_rail_px_count = substraction.sum()
     railway_px_count = rail_mask.sum()
     # Removes the masks that are inside the rail mask and too big, but not protruding, probably is the rail itself
-    if intersected_rail_px_count / railway_px_count > 0.7 and substraction_rail_px_count < (
-            0.05 * railway_px_count):  # FIXME da verificare (non so come) che abbia la forma del binario
+    if intersected_rail_px_count / railway_px_count > 0.7 and substraction_rail_px_count < (0.05 * railway_px_count):
         result = False
 
-    x_min = int(railway_box[0])
-    x_max = int(railway_box[2])
-    y_min = int(railway_box[1])
-    y_max = int(railway_box[3])
+    x_min = int(ground_box[0])
+    x_max = int(ground_box[2])
+    y_min = int(ground_box[1])
+    y_max = int(ground_box[3])
 
-    # Removes the masks that are not inside the detected box of the entire railway
+    # Removes the masks that are not inside the detected box of the entire ground
     black_image = np.zeros_like(mask)
-    railway_box_points = np.array([
+    ground_box_points = np.array([
         [[x_min, y_min]],
         [[x_max, y_min]],
         [[x_max, y_max]],
         [[x_min, y_max]]
     ], dtype=np.int32)
-    cv2.fillPoly(black_image, pts=[railway_box_points], color=(255, 255, 255))
+    cv2.fillPoly(black_image, pts=[ground_box_points], color=(255, 255, 255))
     intersection = cv2.bitwise_and(black_image, binary_mask)
     mask_px_count = binary_mask.sum()
     intersected_mask_px_count = intersection.sum()
@@ -1066,9 +1067,6 @@ def is_mask_duplicate(mask, obj_id, last_masks_rails):
     # Normalize current mask: squeeze to 2D, make binary uint8
     mask = np.array(mask)
     mask = np.squeeze(mask)
-    if mask.ndim != 2:
-        # Not a proper 2D mask, cannot compare reliably
-        return False
     # Make binary 0/1, then uint8
     mask = (mask > 0).astype(np.uint8)
 
@@ -1086,10 +1084,6 @@ def is_mask_duplicate(mask, obj_id, last_masks_rails):
         if lm.ndim != 2:
             continue
         lm = (lm > 0).astype(np.uint8)
-
-        # If shapes mismatch, skip to avoid accidental broadcasting or resize artifacts
-        if lm.shape != mask.shape:
-            continue
 
         # Compute IoU safely
         intersection = cv2.bitwise_and(mask, lm)

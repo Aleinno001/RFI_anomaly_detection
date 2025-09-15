@@ -167,7 +167,7 @@ def main():
     GROUND_PROMPT = "all railways. ground."
     BOX_TRESHOLD_RAILS = 0.25
     TEXT_TRESHOLD_RAILS = 0.15
-    BOX_TRESHOLD_OBSTACLES = 0.30 #40
+    BOX_TRESHOLD_OBSTACLES = 0.80 #40
     TEXT_TRESHOLD_OBSTACLES = 0.50  #60
     BOX_TRESHOLD_GROUND = 0.30
     TEXT_TRESHOLD_GROUND = 0.30
@@ -283,6 +283,8 @@ def main():
 
                 print(f"Found ground: {ground_box is not None}, Found main railway: {main_railway_box is not None}, all obstacles: {len(all_obstacles_points)}")
 
+
+
                 ann_id += 1
                 # Add railway to tracking
                 if main_railway_box is not None:
@@ -348,7 +350,7 @@ def main():
                                 obj_id=obj_id,
                                 points=points,
                                 labels=labels,
-                                box=main_railway_box,
+
                             )
                         else:
                             _, _, _ = video_predictor.add_new_points_or_box(
@@ -371,7 +373,6 @@ def main():
             for i, obj_id in enumerate(out_obj_ids):
                 if obj_id == 1:
                     last_masks_rails[obj_id] = utility.refine_mask((out_mask_logits[i] > 0).cpu().numpy(),last_masks_rails[obj_id])
-                    #last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
                 else:
                     last_masks_rails[obj_id] = (out_mask_logits[i] > 0).cpu().numpy()
 

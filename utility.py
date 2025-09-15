@@ -722,23 +722,15 @@ def extract_ground_points_and_labels(image_source, ground_gd_box):
 
 
 def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_masks):
-
     width = image_source.shape[1]
     height = image_source.shape[0]
     gd_width = gd_box[2] - gd_box[0]
-
-    '''
-
-    
-
-    '''
-
     mask_image = None
     # CANNY EDGES
     image_cropped = image_source[int(gd_box[1]):int(gd_box[3]), int(gd_box[0]):int(gd_box[2])]
     img_gray = cv2.cvtColor(image_cropped, cv2.COLOR_BGR2GRAY)
-    img_blur = cv2.GaussianBlur(img_gray, (7, 7), 0)
-    edges = cv2.Canny(image=img_blur, threshold1=60, threshold2=90)
+    img_blur = cv2.GaussianBlur(img_gray, (5, 5), 0)    #7x7
+    edges = cv2.Canny(image=img_blur, threshold1=40, threshold2=90) #60 90
 
     x = int(gd_box[0])
     y = int(gd_box[1])
@@ -749,6 +741,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     blacked_image = cv2.cvtColor(blacked_image, cv2.COLOR_BGR2GRAY)
     blacked_image[y:y + hc, x:x + wc] = edges
 
+    #CONTOURS
     contours, hierarchy = cv2.findContours(blacked_image, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     output = np.zeros_like(blacked_image)
@@ -762,7 +755,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     black_and_mask = np.zeros_like(image_source)
     cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
 
-
+    #Extraction of the railway mask
     for obj_id, mask in rails_masks.items():
         if obj_id == 1:
             h, w = mask.shape[-2:]
@@ -774,10 +767,12 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
     cv2.drawContours(black_and_mask, meaningful_contours, -1, (0, 255, 0), 2)
 
     if mask_image is None:
+        #If previous railway mask was missing
         gdbox_midde_point = x + int(gd_width / 2)
         image_midde_point = int(width / 2)
         average_points = []
         average_levels = []
+        #Calculating middle point of the rails
         for j in range(y + hc, y + hc - int(0.03 * y + hc), -1):
             for i in range(x, x + wc, 3):
                 if black_and_mask[j][i][1] == 255:
@@ -790,21 +785,25 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
             average_midde_point = int((gdbox_midde_point + image_midde_point + edges_rails_midde_point) / 3)
         else:
             average_midde_point = int((gdbox_midde_point + image_midde_point) / 2)
-
+        #Expanding grid points in a triangular shape
         points = [
             [average_midde_point, height - 10],
+            [average_midde_point - 30, height - 10],
+            [average_midde_point + 30, height - 10],
             [average_midde_point, height - 50],
             [average_midde_point - 20, height - 50],
             [average_midde_point + 20, height - 50],
             [average_midde_point, height - 90],
-            [average_midde_point, height - 130],
-            [average_midde_point + 20, height - 130],
-            [average_midde_point - 20, height - 130],
+            [average_midde_point, height - 90],
+            [average_midde_point + 10, height - 90],
+            [average_midde_point - 10, height - 90],
             [average_midde_point, height - 170],
         ]
         points = np.asarray(points, dtype=np.int32).reshape(-1, 2)
         labels = np.ones(len(points), dtype=np.int32)
+
     else:
+        #If previous railway mask is present
         x_mask_points = np.array([])
         mask_middle_points = np.array([])
         avg_array = np.array([])
@@ -861,7 +860,7 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
                 temp_mask_image = binary_mask[..., None] * color.reshape(1, 1, -1)
 
                 for p in savol_array_expanded[:]:
-                    px = int(p[0]);
+                    px = int(p[0])
                     py = int(p[1])
                     if 0 <= py < temp_mask_image.shape[0] and 0 <= px < temp_mask_image.shape[1]:
                         if temp_mask_image[py, px].sum() > 0:
@@ -883,19 +882,11 @@ def extract_main_internal_railway_points_and_labels(image_source, gd_box, rails_
         if len(pos_pts) == 0 and len(neg_pts) == 0:
             # Fallback: centerline-based prompts to avoid empty points
             average_midde_point = x + int(gd_width / 2)
-            points = np.asarray([
-                [average_midde_point, height - 10],
-                [average_midde_point, height - 50],
-                [average_midde_point, height - 90],
-            ], dtype=np.int32)
+            points = np.asarray([[average_midde_point, height - 10],[average_midde_point, height - 50],[average_midde_point, height - 90],], dtype=np.int32)
             labels = np.ones(len(points), dtype=np.int32)
         else:
             points = np.vstack((pos_pts, neg_pts))
-            labels = np.concatenate((
-                np.ones(len(pos_pts), dtype=np.int32),
-                np.zeros(len(neg_pts), dtype=np.int32)
-            ))
-
+            labels = np.concatenate((np.ones(len(pos_pts), dtype=np.int32),np.zeros(len(neg_pts), dtype=np.int32)))
     return points, labels
 
 
@@ -913,6 +904,9 @@ def smooth_curve_from_points(rail_points_x, rail_points_y):
 
 
 def refine_mask(mask, previous_mask=None):
+
+    #Sistemare se la amschera è nera
+
     h, w = mask.shape[-2:]
     black_image = np.zeros((h, w), dtype=np.uint8)
 
@@ -932,6 +926,14 @@ def refine_mask(mask, previous_mask=None):
 
     # Removing mask "islands"or other noise not connected to the main detected object
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # If no contours are found, fall back gracefully
+    if not contours:
+        if previous_mask is not None:
+            return previous_mask.astype(bool)
+        else:
+            return np.zeros((h, w), dtype=bool)
+
 
     main_contour = max(contours, key=cv2.contourArea)
     main_contour = main_contour[:, 0, :]  # Remove nesting
@@ -971,7 +973,6 @@ def show_mask_v(mask, ax, save_fig, frame_idx, obj_id=None, random_color=False):
 
 
 def show_anomalies(mask, ax, rail_mask, save_fig, obj_id, frame_idx):
-    # FIXME infatti se per esempio una persona è in piedi accanto ai binari ma è alta e il binario cirva in lontananza dietro la persona diventa arancione ma non è giusto
     safe = False
     mask = np.array(mask, dtype=np.uint8)
     mask = mask.squeeze()
@@ -1106,7 +1107,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     metric_result_dir = os.path.join("metric_result")
     os.makedirs(metric_result_dir, exist_ok=True)
 
-    mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway, mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, mean_f1_score_at_IoU_levels_railway = calculate_accuracy_main_railway(
+    mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails, IoU_distribution_railway, mean_recall_at_IoU_levels_railway, mean_precision_at_IoU_levels_railway, mean_f1_score_at_IoU_levels_railway, panoptic_quality_railway = calculate_accuracy_main_railway(
         number_of_frames, temp_main_railway_dir)
     mean_IoU_obstacles, mean_recall_obstacles_75, mean_precision_obstacles_75, mean_f1_score_obstacles, mean_true_safe_recall, mean_true_dangerous_recall, mean_true_safe_precision, mean_true_dangerous_precision_, IoU_distribution_obstacles, mean_recall_at_IoU_levels_obstacles, mean_precision_at_IoU_levels_obstacles, mean_f1_score_at_IoU_levels_obstacles, panoptic_quality = calculate_accuracy_obstacles(
         number_of_frames, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir)
@@ -1114,11 +1115,11 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     # Table with everithing
 
     # Create a dictionary with 3 columns and 8 rows of random data
-    metrics = ["IoU", "Recall", "Precision", "F1-score"]
+    metrics = ["IoU", "Recall", "Precision", "F1-score","Panoptic Quality"]
     railway = [int(mean_IoU_rails * 100) / 100, int(mean_recall_rails_75 * 100) / 100,
-               int(mean_precision_rails_75 * 100) / 100, int(mean_f1_score_rails * 100) / 100]
+                   int(mean_precision_rails_75 * 100) / 100, int(mean_f1_score_rails * 100) / 100, int(panoptic_quality_railway * 100) / 100]
     obstacles = [int(mean_IoU_obstacles * 100) / 100, int(mean_recall_obstacles_75 * 100) / 100,
-                 int(mean_precision_obstacles_75 * 100) / 100, int(mean_f1_score_obstacles * 100) / 100]
+                 int(mean_precision_obstacles_75 * 100) / 100, int(mean_f1_score_obstacles * 100) / 100, int(panoptic_quality * 100) / 100,]
     data = {
         'Metrics': metrics,
         'Railway': railway,
@@ -1194,7 +1195,7 @@ def calculate_accuracy(number_of_frames, temp_main_railway_dir, temp_safe_obstac
     bar_width = 0.35
     opacity = 0.8
 
-    railway_means = [mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails,0]
+    railway_means = [mean_IoU_rails, mean_recall_rails_75, mean_precision_rails_75, mean_f1_score_rails,panoptic_quality_railway]
     rects1 = plt.bar(index, railway_means, bar_width,
                      alpha=opacity,
                      color='g',
@@ -1306,6 +1307,7 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
     false_negative = 0
 
     IoU_ditribution = [0] * 20
+    IoU_panoptic = 0
 
     true_positive_at_IoU_levels = [0] * 20
     false_negative_at_IoU_levels = [0] * 20
@@ -1370,6 +1372,7 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
 
             if IoU > 0.75:
                 true_positive += 1
+                IoU_panoptic += IoU
             else:
                 false_negative += 1
 
@@ -1381,6 +1384,8 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
     print("Mean mask precision:", mean_precision_75)
     mean_f1_score = 2 * safe_div((mean_precision_75 * mean_recall_75), (mean_precision_75 + mean_recall_75))
     print("Mean mask F1 score:", mean_f1_score)
+    panoptic_quality = safe_div(IoU_panoptic, (true_positive + 0.5 * false_positive + 0.5 * false_negative))
+    print("Panoptic quality:", panoptic_quality)
 
     mean_recall_at_IoU_levels = [0] * 20
     mean_precision_at_IoU_levels = [0] * 20
@@ -1395,7 +1400,7 @@ def calculate_accuracy_main_railway(number_of_frames, temp_main_railway_dir):
                                                       (mean_precision_at_IoU_levels[l] + mean_recall_at_IoU_levels[l]))
 
     # FIXME da mettere i controlli per le divisioni per zero
-    return mean_IoU, mean_recall_75, mean_precision_75, mean_f1_score, IoU_ditribution, mean_recall_at_IoU_levels, mean_precision_at_IoU_levels, mean_f1_score_at_IoU_levels
+    return mean_IoU, mean_recall_75, mean_precision_75, mean_f1_score, IoU_ditribution, mean_recall_at_IoU_levels, mean_precision_at_IoU_levels, mean_f1_score_at_IoU_levels,panoptic_quality
 
 
 def calculate_accuracy_obstacles(number_of_frames, temp_safe_obstacles_dir, temp_dangerous_obstacles_dir):
